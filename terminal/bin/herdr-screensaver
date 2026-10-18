@@ -1,0 +1,26 @@
+#!/bin/sh
+# herdr-screensaver launcher: finds terminal/ (following symlinks) and runs the python package.
+# Needs only python3 >= 3.8 and content.json (next to terminal/).
+set -e
+
+self=$0
+while [ -L "$self" ]; do
+    link=$(readlink "$self")
+    case $link in
+        /*) self=$link ;;
+        *) self=$(dirname "$self")/$link ;;
+    esac
+done
+root=$(CDPATH='' cd -- "$(dirname -- "$self")/.." && pwd -P)
+
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "herdr-screensaver: python3 not found (needs python3 >= 3.8)" >&2
+    exit 1
+fi
+if ! python3 -B -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' 2>/dev/null; then
+    echo "herdr-screensaver: needs python3 >= 3.8, found $(python3 -V 2>&1)" >&2
+    exit 1
+fi
+
+# -B: never write __pycache__ into the plugin dir (or anywhere)
+PYTHONPATH=$root exec python3 -B -m screensaver "$@"

@@ -1,0 +1,109 @@
+#!/bin/bash
+# herdr-screensaver-launch idle|force [org.omarchy.screensaver]
+# Opens one herdr screensaver terminal per monitor. Derived from Omarchy 4.0.0.alpha's
+# omarchy-launch-screensaver (MIT, (c) David Heinemeier Hansson; see THIRD_PARTY_NOTICES.md). What differs:
+# - each terminal runs this plugin's lib/session.sh (not omarchy-screensaver), titled herdr-screensaver,
+#   at a font size fit to its monitor (lib/font-size.sh "$m": state font_size=N, else the largest size at
+#   which herdr gets its full layout);
+# - no ttfx check; the "already running" check looks for a screensaver terminal (--class / --app-id
+#   org.omarchy.screensaver), so the marker argument below does not stop this launcher itself;
+# - idle honours Omarchy's screensaver-off toggle (read only); force (test) skips it.
+# The optional second argument is the literal marker org.omarchy.screensaver. The plugin's Service.qml passes
+# it so that, from the moment this starts, Omarchy's own launcher (pgrep -f '[o]rg.omarchy.screensaver')
+# sees a screensaver as running and exits without starting its own.
+# Terminal class org.omarchy.screensaver: Omarchy's window rules make it fullscreen, and its idle and lock
+# code treat it as the screensaver (omarchy-system-lock closes it).
+
+case ${1:-} in
+idle | force) ;;
+*)
+  echo "usage: herdr-screensaver-launch idle|force [org.omarchy.screensaver]" >&2
+  exit 2
+  ;;
+esac
+case ${2:-org.omarchy.screensaver} in
+org.omarchy.screensaver) ;;
+*)
+  echo "herdr-screensaver-launch: the only marker is org.omarchy.screensaver" >&2
+  exit 2
+  ;;
+esac
+
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+APP=$(dirname "$HERE")
+SESSION="$APP/lib/session.sh"
+FONT_SH="$APP/lib/font-size.sh"
+
+# Exit early if a screensaver terminal (herdr's or Omarchy's) is already running
+pgrep -f -- '[-]-(class|app-id)=org[.]omarchy[.]screensaver' && exit 0
+
+# Allow screensaver to be turned off but also force started
+if command -v omarchy-toggle-enabled >/dev/null 2>&1 && omarchy-toggle-enabled screensaver-off && [[ $1 != "force" ]]; then
+  exit 1
+fi
+
+focused=$(omarchy-hyprland-monitor-focused)
+terminal=$(xdg-terminal-exec --print-id)
+
+case $terminal in
+*Alacritty* | *ghostty* | *foot* | *kitty*) ;;
+*)
+  omarchy-notification-send -g ✋ "Screensaver only runs in Alacritty, Foot, Ghostty, or Kitty"
+  exit 1
+  ;;
+esac
+
+hypr_focus_monitor() {
+  hyprctl dispatch "hl.dsp.focus({ monitor = \"$1\" })" >/dev/null 2>&1 || hyprctl dispatch focusmonitor "$1" >/dev/null
+}
+
+hypr_exec() {
+  local command
+  printf -v command '%q ' "$@"
+
+  hyprctl dispatch "hl.dsp.exec_cmd([[$command]])" >/dev/null 2>&1 || hyprctl dispatch exec -- bash -lc "$command" >/dev/null
+}
+
+SOCKET="$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock"
+
+# Open Hyprland's event stream before spawning anything, so a terminal that maps
+# quickly can't emit its openwindow event before we are listening for it.
+exec {events}< <(socat -U - "UNIX-CONNECT:$SOCKET")
+
+# hypr_exec is async and a new window maps on whatever monitor is focused at that
+# moment. Block until this monitor's screensaver actually opens before moving
+# focus on -- otherwise slow-starting terminals all pile onto the last monitor.
+# The deadline is a safety net in case the window never appears.
+wait_for_screensaver_window() {
+  local line deadline=$((SECONDS + 5))
+  while ((SECONDS < deadline)) && IFS= read -r -t $((deadline - SECONDS)) -u "$events" line; do
+    [[ $line == openwindow\>\>*,org.omarchy.screensaver,* ]] && return 0
+  done
+}
+
+# foot keeps the family of Omarchy's screensaver.ini (JetBrainsMono Nerd Font) and only changes the size
+FOOT_FAMILY="JetBrainsMono Nerd Font"
+
+for m in $(hyprctl monitors -j | jq -r '.[] | .name'); do
+  hypr_focus_monitor "$m"
+  size=$("$FONT_SH" "$m")
+
+  case $terminal in
+  *Alacritty*)
+    hypr_exec alacritty --class=org.omarchy.screensaver -o "font.size=$size" --title=herdr-screensaver --config-file "$OMARCHY_PATH/default/alacritty/screensaver.toml" -e "$SESSION"
+    ;;
+  *ghostty*)
+    hypr_exec ghostty --class=org.omarchy.screensaver --config-file="$OMARCHY_PATH/default/ghostty/screensaver" --font-size="$size" --title=herdr-screensaver -e "$SESSION"
+    ;;
+  *foot*)
+    hypr_exec foot --app-id=org.omarchy.screensaver --font="$FOOT_FAMILY:size=$size" --title=herdr-screensaver --config="$OMARCHY_PATH/default/foot/screensaver.ini" -e "$SESSION"
+    ;;
+  *kitty*)
+    hypr_exec kitty --class=org.omarchy.screensaver --override font_size="$size" --override window_padding_width=0 --title=herdr-screensaver -e "$SESSION"
+    ;;
+  esac
+
+  wait_for_screensaver_window
+done
+
+hypr_focus_monitor "$focused"

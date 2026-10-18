@@ -1,0 +1,114 @@
+#!/bin/bash
+# herdr-screensaver-ctl: the plugin's state, the one file it writes outside the screensaver's own logs.
+#   herdr-screensaver-ctl get <key>           prints the value (the default when unset)
+#   herdr-screensaver-ctl set <key> <value>   validates, then writes atomically (tmp + mv)
+#   herdr-screensaver-ctl status              ON/OFF of each piece this script can see offline
+#   herdr-screensaver-ctl paths               the data dir, state file and logs
+# Keys (one key=value per line in $DATA/state; missing = the default):
+#   enabled        on (default) | off
+#   takeover       off (default) | on       (set on also records takeover_since)
+#   takeover_since an ISO time, written by `set takeover on` only
+#   lock_on_wake   on (default) | off
+#   font_size      auto (default) | 6..36, whole or .5
+# Unknown keys or values: exit 2, nothing written.
+# $DATA is ${HERDR_SS_DATA:-~/.local/share/herdr-screensaver-plugin} (HERDR_SS_DATA is for tests). Nothing
+# else is ever written. The old curl install's ~/.local/share/herdr-screensaver is only checked for existence.
+set -u
+
+DATA=${HERDR_SS_DATA:-$HOME/.local/share/herdr-screensaver-plugin}
+STATE="$DATA/state"
+OLD="$HOME/.local/share/herdr-screensaver"
+
+die() { printf 'herdr-screensaver-ctl: %s\n' "$*" >&2; exit 2; }
+
+default_of() {
+  case $1 in
+  enabled) echo on ;;
+  takeover) echo off ;;
+  takeover_since) echo "" ;;
+  lock_on_wake) echo on ;;
+  font_size) echo auto ;;
+  *) return 1 ;;
+  esac
+}
+
+valid_font() {
+  [[ $1 == auto ]] && return 0
+  [[ $1 =~ ^([0-9]+)(\.5)?$ ]] && [ "${BASH_REMATCH[1]}" -ge 6 ] && { [ "${BASH_REMATCH[1]}" -lt 36 ] || [ "$1" = 36 ]; }
+}
+
+valid_value() {
+  case $1 in
+  enabled | takeover | lock_on_wake) [[ $2 == on || $2 == off ]] ;;
+  font_size) valid_font "$2" ;;
+  *) return 1 ;;
+  esac
+}
+
+get() {
+  local v
+  default_of "$1" >/dev/null || die "unknown key: $1"
+  v=$([ -f "$STATE" ] && sed -n "s/^$1=//p" "$STATE" | head -n 1)
+  if [ -n "$v" ]; then echo "$v"; else default_of "$1"; fi
+}
+
+# set or replace one key=value line, other lines untouched; tmp + mv in the data dir
+state_put() {
+  local tmp
+  if ! { mkdir -p "$DATA" && chmod 700 "$DATA"; }; then die "cannot create $DATA"; fi
+  tmp=$(mktemp "$STATE.XXXXXX") || die "cannot write in $DATA"
+  if ! { { [ ! -f "$STATE" ] || grep -v "^$1=" "$STATE" || true; printf '%s=%s\n' "$1" "$2"; } >"$tmp" && mv -f "$tmp" "$STATE"; }; then
+    rm -f "$tmp"
+    die "cannot write $STATE"
+  fi
+}
+
+set_key() {
+  [ $# = 2 ] || die "usage: set <key> <value>"
+  [ "$1" != takeover_since ] || die "takeover_since is written by 'set takeover on' only"
+  default_of "$1" >/dev/null || die "unknown key: $1"
+  valid_value "$1" "$2" || die "bad value for $1: '$2'"
+  state_put "$1" "$2"
+  if [ "$1" = takeover ] && [ "$2" = on ]; then state_put takeover_since "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; fi
+  echo "$1=$2"
+}
+
+upper() { get "$1" | tr '[:lower:]' '[:upper:]'; }
+onoff() { if "$@" >/dev/null 2>&1; then echo ON; else echo OFF; fi; }
+
+status() {
+  local term since py
+  echo "enabled: $(upper enabled)"
+  since=""
+  [ "$(get takeover)" = on ] && since=$(get takeover_since)
+  echo "takeover: $(upper takeover)${since:+ (since $since)}"
+  echo "lock on wake: $(upper lock_on_wake)"
+  echo "font size: $(get font_size)"
+  echo "showing: $(onoff pgrep -f -- '[-]-(class|app-id)=org[.]omarchy[.]screensaver')"
+  echo "stay-awake: $(onoff test -e "${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/indicators/stay-awake")"
+  py=$(python3 -B -I -c 'import sys; print("%d.%d" % sys.version_info[:2]) if sys.version_info >= (3, 8) else sys.exit(1)' 2>/dev/null) &&
+    echo "python3: ON ($py)" || echo "python3: OFF (needs python3 >= 3.8)"
+  term=$(xdg-terminal-exec --print-id 2>/dev/null)
+  case $term in
+  *Alacritty* | *ghostty* | *foot* | *kitty*) echo "terminal: ON ($term)" ;;
+  *) echo "terminal: OFF (${term:-unknown}; needs Alacritty, Ghostty, Foot or Kitty)" ;;
+  esac
+  if [ -e "$OLD/state" ]; then
+    echo "old curl install: DETECTED ($OLD; run its own uninstall first)"
+  else
+    echo "old curl install: none"
+  fi
+}
+
+paths() {
+  printf '%s\n' "data: $DATA" "state: $STATE" "lock log: $DATA/lock.log" "font log: $DATA/font.log" \
+    "found eggs: $DATA/found" "debug log: $DATA/debug.log"
+}
+
+case ${1:-} in
+get) [ $# = 2 ] || die "usage: get <key>"; get "$2" ;;
+set) shift; set_key "$@" ;;
+status) [ $# = 1 ] || die "usage: status"; status ;;
+paths) [ $# = 1 ] || die "usage: paths"; paths ;;
+*) die "usage: herdr-screensaver-ctl get <key> | set <key> <value> | status | paths" ;;
+esac
