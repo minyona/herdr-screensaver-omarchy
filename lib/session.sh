@@ -5,7 +5,7 @@
 # legacy keyword second), wait up to 2 s for the terminal to leave 80x24, run the screensaver, end on
 # any key or mouse move (herdr itself) or when the window loses focus. Extra arguments go to the engine.
 # Lock on wake (lock-on-wake.sh): every way out (key, mouse, focus loss, the window closing, a signal,
-# the engine crashing or exiting non-zero) goes through on_exit, which requests Omarchy's lock and waits
+# the engine crashing or exiting non-zero) goes through on_exit, which asks Omarchy's lock to lock and waits
 # until it is secure BEFORE the screensaver windows close (pkill, like Omarchy), unless Omarchy is
 # already locking, or lock on wake is off (state lock_on_wake=off). If the lock cannot be confirmed it
 # says so in $DATA/lock.log and a critical notification.

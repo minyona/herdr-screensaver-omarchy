@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Fake socat for Hyprland's socket2: streams the events the fake hyprctl appends.
+exec tail -n +1 -f "${FAKE_EVENTS:?}"

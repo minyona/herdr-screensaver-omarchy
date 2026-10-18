@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+log() { printf "%s\n" "$*" >> "${FAKE_LOG:?}"; }
+log "omarchy-notification-send $*"
+# FAKE_NOTIFY_SLEEP=s: a slow notification daemon
+[ -z "${FAKE_NOTIFY_SLEEP:-}" ] || sleep "$FAKE_NOTIFY_SLEEP"

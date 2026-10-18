@@ -6,6 +6,7 @@
 #   - data files named under ~/.local/share/herdr-screensaver-plugin are ones the code writes
 #   - the plugin id and the install URL match manifest.json / the planned repo
 #   - install and removal sections both exist; the scanner-safe negation line is there verbatim
+# shellcheck disable=SC2013,SC2015,SC2016  # word lists on purpose; ok/bad always return 0; patterns are literal code text
 set -u
 cd "$(dirname "$0")/.." || exit 2
 R=README.md

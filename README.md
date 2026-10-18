@@ -93,7 +93,7 @@ All of them go through the Omarchy shell's IPC:
 
 | Command | What it does |
 |---|---|
-| `omarchy-shell herdr-screensaver status` | ON/OFF of each piece: enabled, takeover, lock on wake, font size, idle monitor (and its timeout), stay-awake, showing, python3, terminal, old curl install |
+| `omarchy-shell herdr-screensaver status` | ON/OFF of each piece: enabled, takeover, lock on wake, font size, idle monitor (and its timeout), stay-awake, showing, python3, terminal, old one-liner install |
 | `omarchy-shell herdr-screensaver takeover on` | Opt in: herdr becomes your screensaver (`off` returns to Omarchy's; `status` prints it) |
 | `omarchy-shell herdr-screensaver test` | Show it now, on every monitor |
 | `omarchy-shell herdr-screensaver disable` | Pause the takeover without forgetting it (`enable` resumes) |
@@ -139,7 +139,7 @@ rm -rf ~/.local/share/herdr-screensaver-plugin
 - **"Screensaver only runs in Alacritty, Foot, Ghostty, or Kitty".** Your default terminal is another one (`status`
   shows which). Set one of those four as your default terminal.
 - **A blank screen instead of herdr.** python3 is missing or older than 3.8. Waking still locks.
-- **The old curl install is still active.** `status` says `old curl install: DETECTED`. Remove it with its own
+- **The old one-liner install is still active.** `status` says `old one-liner install: DETECTED`. Remove it with its own
   command first: `~/.local/share/herdr-screensaver/omarchy/install.sh uninstall`. This plugin never touches it.
 - **The shell's log.** `qs log -p "$OMARCHY_PATH/shell" --tail 100` shows this plugin's lines (they start with
   `herdr-screensaver`).

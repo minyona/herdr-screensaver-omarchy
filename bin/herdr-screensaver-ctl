@@ -12,7 +12,7 @@
 #   font_size      auto (default) | 6..36, whole or .5
 # Unknown keys or values: exit 2, nothing written.
 # $DATA is ${HERDR_SS_DATA:-~/.local/share/herdr-screensaver-plugin} (HERDR_SS_DATA is for tests). Nothing
-# else is ever written. The old curl install's ~/.local/share/herdr-screensaver is only checked for existence.
+# else is ever written. The old one-liner install's ~/.local/share/herdr-screensaver is only checked for existence.
 set -u
 
 DATA=${HERDR_SS_DATA:-$HOME/.local/share/herdr-screensaver-plugin}
@@ -34,7 +34,7 @@ default_of() {
 
 valid_font() {
   [[ $1 == auto ]] && return 0
-  [[ $1 =~ ^([0-9]+)(\.5)?$ ]] && [ "${BASH_REMATCH[1]}" -ge 6 ] && { [ "${BASH_REMATCH[1]}" -lt 36 ] || [ "$1" = 36 ]; }
+  [[ $1 =~ ^([1-9][0-9]?)(\.5)?$ ]] && [ "${BASH_REMATCH[1]}" -ge 6 ] && { [ "${BASH_REMATCH[1]}" -lt 36 ] || [ "$1" = 36 ]; }
 }
 
 valid_value() {
@@ -94,9 +94,9 @@ status() {
   *) echo "terminal: OFF (${term:-unknown}; needs Alacritty, Ghostty, Foot or Kitty)" ;;
   esac
   if [ -e "$OLD/state" ]; then
-    echo "old curl install: DETECTED ($OLD; run its own uninstall first)"
+    echo "old one-liner install: DETECTED ($OLD; run its own uninstall first)"
   else
-    echo "old curl install: none"
+    echo "old one-liner install: none"
   fi
 }
 

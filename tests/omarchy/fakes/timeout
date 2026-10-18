@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Fake timeout (macOS has none): logs, then runs the command for at most DURATION like coreutils timeout
+# (options such as --kill-after are accepted and ignored; exit 124 when the time ran out). The command it
+# meets in Omarchy's lock is pidwait, a fake here too (FAKE_TTFX=stubborn: a ttfx that ignores SIGTERM).
+printf "%s\n" "timeout $*" >> "${FAKE_LOG:?}"
+while [[ ${1:-} == -* ]]; do shift; done
+d=${1:?duration}; shift
+d=${d%s}
+"$@" &
+c=$!
+( sleep "$d"; kill -0 "$c" 2>/dev/null && printf "%s\n" "timeout fired after ${d}s: $*" >> "$FAKE_LOG" && kill -TERM "$c" 2>/dev/null ) &
+k=$!
+wait "$c"; rc=$?
+kill "$k" 2>/dev/null
+[ "$rc" != 143 ] || rc=124
+exit "$rc"

@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Fake pgrep: "finds" a running screensaver when $FAKE_RUNNING exists; -x 1password only when FAKE_1PASSWORD=1.
+log() { printf "%s\n" "$*" >> "${FAKE_LOG:?}"; }
+log "pgrep $*"
+if [ "$*" = "-x 1password" ]; then [ "${FAKE_1PASSWORD:-}" = 1 ]; exit; fi
+if [ -n "${FAKE_RUNNING:-}" ] && [ -e "$FAKE_RUNNING" ]; then echo 4242; exit 0; fi
+exit 1

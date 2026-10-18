@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Fake hyprctl: 2 monitors; dispatches are logged; an exec emits an openwindow event (see socat);
+# activewindow reports the class in $FAKE_ACTIVE (default: the screensaver).
+# monitors -j / -j monitors: DP-1 1920x1200 scale 1.6 and HDMI-A-1 2560x1440 scale 1 (Hyprland's key set),
+# or $FAKE_MONITORS (JSON) when set; solitaryBlockedBy has LOCK when FAKE_SOLITARY_LOCK=1 (omarchy-hyprland-
+# session-locked); FAKE_HYPR_FAIL=1 makes -j monitors fail.
+log() { printf "%s\n" "$*" >> "${FAKE_LOG:?}"; }
+case "${1:-}" in
+-j | monitors)
+  [ "$1" = -j ] && [ "${FAKE_HYPR_FAIL:-}" = 1 ] && exit 1
+  if [ -n "${FAKE_MONITORS:-}" ]; then printf '%s\n' "$FAKE_MONITORS"; exit 0; fi
+  b='"WINDOWS"'; [ "${FAKE_SOLITARY_LOCK:-}" = 1 ] && b='"LOCK"'
+  j=""
+  while read -r n w h s f; do
+    j="${j:+$j,}{\"name\":\"$n\",\"width\":$w,\"height\":$h,\"scale\":$s,\"transform\":0,\"focused\":$f,\"disabled\":false,\"specialWorkspace\":{\"name\":\"\"},\"solitaryBlockedBy\":[$b]}"
+  done <<<"DP-1 1920 1200 1.60 true
+HDMI-A-1 2560 1440 1.00 false"
+  echo "[$j]"
+  ;;
+clients) echo '[]' ;;
+activewindow) printf '{"class":"%s"}\n' "$(cat "${FAKE_ACTIVE:-/nonexistent}" 2>/dev/null || echo org.omarchy.screensaver)" ;;
+dispatch)
+  shift
+  log "hyprctl dispatch $*"
+  case "$*" in *exec_cmd*) echo "openwindow>>5a5a,special:screensaver,org.omarchy.screensaver,screensaver" >> "${FAKE_EVENTS:?}" ;; esac
+  ;;
+*) log "hyprctl $*" ;;
+esac
+exit 0

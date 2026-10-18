@@ -33,7 +33,7 @@ function shouldArm(s) {
 function validFontSize(v) {
   var s = String(v)
   if (s === "auto") return true
-  var m = /^([0-9]+)(\.5)?$/.exec(s)
+  var m = /^([1-9][0-9]?)(\.5)?$/.exec(s)
   if (!m) return false
   var n = parseInt(m[1], 10)
   return n >= 6 && (n < 36 || s === "36")
@@ -92,7 +92,7 @@ function ctlArgv(dir) {
 function onOff(b) { return b ? "ON" : "OFF" }
 
 // The status() text: the state and the monitor from the service, then the offline probes from
-// `herdr-screensaver-ctl status` (showing, python3, terminal, old curl install).
+// `herdr-screensaver-ctl status` (showing, python3, terminal, old one-liner install).
 function statusText(o) {
   o = o || {}
   var st = o.state || parseState("")
@@ -106,7 +106,7 @@ function statusText(o) {
   ]
   if (o.running) lines.push("launcher: running")
   var probes = String(o.probes || "").split("\n")
-  var keep = /^(showing|python3|terminal|old curl install): /
+  var keep = /^(showing|python3|terminal|old one-liner install): /
   var any = false
   for (var i = 0; i < probes.length; i++) {
     if (keep.test(probes[i])) { lines.push(probes[i]); any = true }

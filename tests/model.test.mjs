@@ -55,7 +55,7 @@ test('parseState: defaults, first line wins, bad values ignored', () => {
 
 test('validFontSize matches ctl and font-size.sh', () => {
   for (const v of ['auto', '6', '9', '9.5', '35.5', '36']) assert.ok(M.validFontSize(v), v);
-  for (const v of ['5.5', '36.5', '37', '12.3', '', 'x', '-9', ' 9']) assert.ok(!M.validFontSize(v), v);
+  for (const v of ['5.5', '36.5', '37', '12.3', '', 'x', '-9', ' 9', '08', '010']) assert.ok(!M.validFontSize(v), v);
 });
 
 test('launchArgv carries the marker; paths stay arguments (HOME with spaces)', () => {
@@ -89,12 +89,12 @@ test('ctlArgv and the scripts it runs: bash -lc with "$0" "$@" really keeps a sp
 test('statusText: one ON/OFF line per piece', () => {
   const t = M.statusText({
     state: M.parseState('takeover=on\ntakeover_since=T\n'), armed: true, timeout: 148, screensaver: 150,
-    stayAwake: false, stayAwakeLoaded: true, probes: 'enabled: ON\nshowing: OFF\npython3: ON (3.12)\nterminal: ON (Alacritty.desktop)\nold curl install: none\n'
+    stayAwake: false, stayAwakeLoaded: true, probes: 'enabled: ON\nshowing: OFF\npython3: ON (3.12)\nterminal: ON (Alacritty.desktop)\nold one-liner install: none\n'
   });
   assert.equal(t, [
     'enabled: ON', 'takeover: ON (since T)', 'lock on wake: ON', 'font size: auto',
     "idle monitor: ARMED (148 s, 2 s before Omarchy's screensaver at 150 s)", 'stay-awake: OFF',
-    'showing: OFF', 'python3: ON (3.12)', 'terminal: ON (Alacritty.desktop)', 'old curl install: none'
+    'showing: OFF', 'python3: ON (3.12)', 'terminal: ON (Alacritty.desktop)', 'old one-liner install: none'
   ].join('\n'));
   assert.match(M.statusText({}), /idle monitor: OFF/);
   assert.match(M.statusText({}), /probes: not run yet/);

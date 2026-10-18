@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+[ "${1:-}" = --print-id ] && echo "${FAKE_TERMINAL:-Alacritty.desktop}"

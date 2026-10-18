@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Fake omarchy-shell, lock target only: keeps the contract of Omarchy's lock plugin IPC
+# (shell/plugins/lock/Service.qml, IpcHandler "lock", v4.0.4 = the XPS copy: lock() l.513-517,
+# isLocked() l.519-521 with locked = lockRequested || sessionLock.locked || sessionLock.secure (l.37),
+# status() l.523-537 as compact JSON.stringify) and of omarchy-shell itself (connection/timeout/unknown
+# target: stderr + exit 1; refusals on stdout with exit 0). Every call is logged to $FAKE_LOG.
+# State in $FAKE_LOCK_DIR (default $FAKE_LOG.lockstate). Knobs:
+#   FAKE_SHELL=down|hang|missing-pam|never-secure   FAKE_LOCKED=1 (already locked and secure)
+#   FAKE_SHELL=slow-unrequested: lock takes 1 s (times out when the IPC limit is shorter) and status
+#     never shows "requested":true nor "secure":true, so lock on wake keeps asking again
+#   FAKE_SECURE_AFTER=n (status polls after the request until secure, default 2)
+log() { printf "%s\n" "$*" >> "${FAKE_LOG:?}"; }
+D=${FAKE_LOCK_DIR:-$FAKE_LOG.lockstate}
+mkdir -p "$D"
+t=${OMARCHY_SHELL_IPC_TIMEOUT:-2}
+case ${FAKE_SHELL:-} in
+down) log "omarchy-shell $*"; echo "omarchy-shell: the shell is not running" >&2; exit 1 ;;
+hang) log "omarchy-shell $*"; sleep "${t%s}"; echo "omarchy-shell: lock $2 not responding after ${t}" >&2; exit 1 ;;
+esac
+[ "${1:-}" = lock ] || { log "omarchy-shell $*"; echo "omarchy-shell: unknown target ${1:-}" >&2; exit 1; }
+requested() { [ -e "$D/requested" ] || [ "${FAKE_LOCKED:-}" = 1 ]; }
+case ${2:-} in
+lock)
+  log "omarchy-shell lock lock"
+  if [ "${FAKE_SHELL:-}" = missing-pam ]; then echo missing-pam; exit 0; fi
+  if [ "${FAKE_SHELL:-}" = slow-unrequested ]; then
+    if awk -v t="${t%s}" 'BEGIN { exit !(t < 1) }'; then sleep "${t%s}"; echo "omarchy-shell: lock lock not responding after ${t}" >&2; exit 1; fi
+    sleep 1; echo ok; exit 0
+  fi
+  : > "$D/requested"; echo ok
+  ;;
+isLocked)
+  log "omarchy-shell lock isLocked"
+  requested && echo true || echo false
+  ;;
+status)
+  n=0
+  if [ -e "$D/requested" ]; then n=$(( $(cat "$D/polls" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$D/polls"; fi
+  req=false; requested && req=true
+  sec=false
+  if [ "${FAKE_LOCKED:-}" = 1 ]; then sec=true
+  elif [ -e "$D/requested" ] && [ "${FAKE_SHELL:-}" != never-secure ] && [ "$n" -ge "${FAKE_SECURE_AFTER:-2}" ]; then sec=true; fi
+  pend=false; [ $req = true ] && [ $sec = false ] && pend=true
+  log "omarchy-shell lock status secure=$sec"
+  printf '{"locked":%s,"requested":%s,"pending":%s,"sessionLocked":%s,"secure":%s,"realScreens":1,"passwordPam":true,"fingerprint":false,"authenticating":false,"lastEvent":"%s","lastEventAt":"2026-10-17T00:00:00.000Z"}\n' \
+    "$req" "$req" "$pend" "$sec" "$sec" "$([ $sec = true ] && echo secure || echo lock-requested)"
+  ;;
+*) log "omarchy-shell $*"; echo "omarchy-shell: lock has no function ${2:-}" >&2; exit 1 ;;
+esac

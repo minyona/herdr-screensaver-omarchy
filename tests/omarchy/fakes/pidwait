@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Fake pidwait -x <name>: returns at once (nothing to wait for), except FAKE_TTFX=stubborn with ttfx: a ttfx
+# that ignored pkill's SIGTERM, so it waits until killed (Omarchy wraps it in "timeout 1s"). Not logged.
+if [ "${FAKE_TTFX:-}" = stubborn ] && [ "${*: -1}" = ttfx ]; then exec sleep 3600; fi
+exit 0

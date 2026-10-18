@@ -90,13 +90,13 @@ for m in $(hyprctl monitors -j | jq -r '.[] | .name'); do
 
   case $terminal in
   *Alacritty*)
-    hypr_exec alacritty --class=org.omarchy.screensaver -o "font.size=$size" --title=herdr-screensaver --config-file "$OMARCHY_PATH/default/alacritty/screensaver.toml" -e "$SESSION"
+    hypr_exec alacritty --class=org.omarchy.screensaver -o "font.size=$size" --config-file "$OMARCHY_PATH/default/alacritty/screensaver.toml" --title=herdr-screensaver -e "$SESSION"
     ;;
   *ghostty*)
     hypr_exec ghostty --class=org.omarchy.screensaver --config-file="$OMARCHY_PATH/default/ghostty/screensaver" --font-size="$size" --title=herdr-screensaver -e "$SESSION"
     ;;
   *foot*)
-    hypr_exec foot --app-id=org.omarchy.screensaver --font="$FOOT_FAMILY:size=$size" --title=herdr-screensaver --config="$OMARCHY_PATH/default/foot/screensaver.ini" -e "$SESSION"
+    hypr_exec foot --app-id=org.omarchy.screensaver --font="$FOOT_FAMILY:size=$size" --config="$OMARCHY_PATH/default/foot/screensaver.ini" --title=herdr-screensaver -e "$SESSION"
     ;;
   *kitty*)
     hypr_exec kitty --class=org.omarchy.screensaver --override font_size="$size" --override window_padding_width=0 --title=herdr-screensaver -e "$SESSION"

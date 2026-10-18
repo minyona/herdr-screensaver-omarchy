@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+log() { printf "%s\n" "$*" >> "${FAKE_LOG:?}"; }
+log "pkill $*"
+exit 0
