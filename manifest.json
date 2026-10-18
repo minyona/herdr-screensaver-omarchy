@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.minyona.herdr-screensaver",
+  "name": "Herdr Screensaver",
+  "version": "1.0.0",
+  "author": "Michael Mignogna (minyona)",
+  "license": "MIT",
+  "description": "A screensaver that pretends to be a live Herdr session: fake agents, generated live, with hidden easter eggs. Follows your Omarchy theme; locks on wake. Idle takeover is opt-in.",
+  "kinds": ["service"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml"
+  }
+}
