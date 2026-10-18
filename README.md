@@ -79,7 +79,8 @@ omarchy-shell herdr-screensaver lockOnWake off      # or on, or status
 ## Font scaling
 
 Each monitor gets the largest font size (8 to 18 pt) at which herdr shows its full layout (at least 150x40
-cells). For example, a 1920x1200 screen at scale 1.6 gets 9 pt, about 160x46. The size is worked out from
+cells). If even 8 pt is too big for that (a small or very high-scale screen), it uses 8 pt anyway and herdr
+shows a more compact layout. For example, a 1920x1200 screen at scale 1.6 gets 9 pt, about 160x46. The size is worked out from
 `hyprctl monitors -j` each time the screensaver starts. Each choice is logged in
 `~/.local/share/herdr-screensaver-plugin/font.log`. To fix one size on every monitor:
 
@@ -96,7 +97,8 @@ All of them go through the Omarchy shell's IPC:
 | `omarchy-shell herdr-screensaver status` | ON/OFF of each piece: enabled, takeover, lock on wake, font size, idle monitor (and its timeout), stay-awake, showing, python3, terminal, old one-liner install |
 | `omarchy-shell herdr-screensaver takeover on` | Opt in: herdr becomes your screensaver (`off` returns to Omarchy's; `status` prints it) |
 | `omarchy-shell herdr-screensaver test` | Show it now, on every monitor |
-| `omarchy-shell herdr-screensaver disable` | Pause the takeover without forgetting it (`enable` resumes) |
+| `omarchy-shell herdr-screensaver disable` | Pause the takeover without forgetting it |
+| `omarchy-shell herdr-screensaver enable` | Resume it after `disable` (on by default) |
 | `omarchy-shell herdr-screensaver reload` | Read the state again and re-arm |
 | `omarchy-shell herdr-screensaver lockOnWake off` | Do not lock on wake (`on`, `status`) |
 | `omarchy-shell herdr-screensaver fontSize auto` | Per-monitor font size (or a fixed size such as `9`) |
@@ -106,17 +108,21 @@ The same state can be read and set offline with `bin/herdr-screensaver-ctl` in t
 
 ## State and data
 
-Everything the plugin writes is in one directory, `~/.local/share/herdr-screensaver-plugin`:
+Its files are all in one directory, `~/.local/share/herdr-screensaver-plugin`:
 
 | File | What |
 |---|---|
 | `state` | Your settings: `enabled`, `takeover`, `takeover_since`, `lock_on_wake`, `font_size` |
 | `found` | The eggs you have found |
-| `lock.log`, `font.log` | One line per lock on wake and per font choice (each kept to about 200 lines) |
-| `debug.log` | Only when the file `debug` exists in the same directory |
+| `lock.log` | One line per lock-on-wake event (kept to about 200 lines) |
+| `font.log` | One line per font choice, plus one `stty size` line each time a screensaver terminal starts (kept to about 200 lines) |
+| `debug.log` | Only while debugging: when the file `debug` exists in the same directory, when `HERDR_SS_DEBUG` is set (and not `0`), or while the file `print-size` exists (which turns debugging on) |
 
-It writes nothing in the plugin's own directory and nothing anywhere else, apart from one temporary file
-(in `$TMPDIR` or `/tmp`) that it deletes as soon as it has chosen a font size.
+It writes nothing in the plugin's own directory. Outside that data directory it writes only two things:
+
+- one temporary file (in `$TMPDIR` or `/tmp`) that it deletes as soon as it has chosen a font size;
+- a line in the system log (through `logger -t herdr-screensaver`) when lock on wake cannot confirm that the
+  screen locked, or when its lock-on-wake script is missing. That failure is meant to be loud.
 
 ## Removal
 
@@ -149,14 +155,15 @@ rm -rf ~/.local/share/herdr-screensaver-plugin
 ## What it does NOT do
 
 - It does not change Omarchy's settings: not `~/.config/omarchy/shell.json`, not `~/.config/hypr`, not your
-  `.bashrc`, not the Omarchy menu. It does not use Omarchy's screensaver toggle.
+  `.bashrc`, not the Omarchy menu. It never turns Omarchy's screensaver toggle (screensaver-off) on or off;
+  in idle mode it only reads it, so that turning Omarchy's screensaver off also keeps herdr from starting.
 - It does not take over your screensaver unless you run `takeover on`.
 - It runs no install or removal scripts, downloads nothing and uses no network.
 - No sudo or pkexec is required.
 - It starts no second Quickshell process. Its windows are terminals, opened the way Omarchy opens its own
   screensaver.
 - It reads only what it needs from Omarchy: the theme's colors, the monitor sizes, the idle times, the
-  stay-awake toggle and whether the screen is locked.
+  stay-awake and screensaver-off toggles, and whether the screen is locked.
 
 ## Credits and license
 

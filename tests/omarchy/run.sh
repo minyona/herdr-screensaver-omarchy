@@ -434,6 +434,9 @@ ctl set font_size 36 >/dev/null && frun kitty.desktop && has "$X1" "font_size=36
 printf 'font_size=99\n' > "$H/$DATA_REL/state"
 frun foot.desktop
 has "$X1" "Nerd\\ Font:size=9 " && has "$X2" "Nerd\\ Font:size=18 " && ok "26g. a hand-edited bad size in the state (99): ignored, per monitor (9 / 18)" || { bad "26g. bad state size"; cat "$T/log"; }
+printf 'font_size=08\n' > "$H/$DATA_REL/state"
+frun foot.desktop
+has "$X1" "Nerd\\ Font:size=9 " && has "$X2" "Nerd\\ Font:size=18 " && ok "26g. a hand-edited 08 in the state: refused by font-size.sh like ctl and Model.js, per monitor (9 / 18)" || { bad "26g. 08 in state"; cat "$T/log"; }
 ctl set font_size auto >/dev/null && frun foot.desktop && has "$X1" "Nerd\\ Font:size=9 " && ok "26g. ctl set font_size auto: per monitor again" || bad "26g. auto"
 
 # F4: session.sh logs the real grid next to the prediction

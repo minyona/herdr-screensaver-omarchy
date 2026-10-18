@@ -18,8 +18,14 @@ has() { grep -qxF -- "$1" <<<"$tracked"; }
 
 # IPC functions
 ipc=$(awk '/IpcHandler \{/,0' Service.qml | sed -n 's/^ *function \([A-Za-z]*\)(.*/\1/p' | sort -u)
-for fn in $(grep -o 'omarchy-shell herdr-screensaver [A-Za-z]*' "$R" | awk '{print $3}' | sort -u); do
+documented=$(grep -o 'omarchy-shell herdr-screensaver [A-Za-z]*' "$R" | awk '{print $3}' | sort -u)
+for fn in $documented; do
   if grep -qx "$fn" <<<"$ipc"; then ok "ipc $fn"; else bad "ipc function '$fn' not in Service.qml"; fi
+done
+# and the other way: every IPC function of Service.qml is documented as its own command
+[ -n "$ipc" ] || bad "no IPC functions found in Service.qml"
+for fn in $ipc; do
+  if grep -qx "$fn" <<<"$documented"; then ok "documented: omarchy-shell herdr-screensaver $fn"; else bad "IPC function '$fn' is not documented as 'omarchy-shell herdr-screensaver $fn' in the README"; fi
 done
 # arguments shown with the IPC calls are ones the code accepts
 for pair in "takeover on" "takeover off" "lockOnWake off" "fontSize 11.5" "fontSize auto"; do

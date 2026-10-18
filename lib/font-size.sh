@@ -20,7 +20,7 @@ flog() {
   } 2>/dev/null || true
 }
 # a size the terminals take: 6..36, whole or .5
-valid() { [[ $1 =~ ^([0-9]+)(\.5)?$ ]] && [ "${BASH_REMATCH[1]}" -ge 6 ] && { [ "${BASH_REMATCH[1]}" -lt 36 ] || [ "$1" = 36 ]; }; }
+valid() { [[ $1 =~ ^([1-9][0-9]?)(\.5)?$ ]] && [ "${BASH_REMATCH[1]}" -ge 6 ] && { [ "${BASH_REMATCH[1]}" -lt 36 ] || [ "$1" = 36 ]; }; }
 fallback() {
   flog "${m:-?} fallback $FALLBACK pt: $1"
   echo "$FALLBACK"
