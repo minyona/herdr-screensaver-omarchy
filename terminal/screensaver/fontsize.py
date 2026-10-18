@@ -1,6 +1,6 @@
 """The font size per monitor: the largest size at which herdr gets its full layout (layout.FULL, the one
-the Mac shows) on that monitor. One pure function, font_pt(); the derived Omarchy launcher calls the CLI
-once per monitor (through omarchy/font-size.sh) and passes the size to foot, alacritty, ghostty or kitty.
+the Mac shows) on that monitor. One pure function, font_pt(); bin/herdr-screensaver-launch calls the CLI
+once per monitor (through lib/font-size.sh) and passes the size to foot, alacritty, ghostty or kitty.
 
 Model (assumptions):
   - the screensaver terminals use JetBrainsMono Nerd Font (Omarchy's screensaver configs do); its metrics,

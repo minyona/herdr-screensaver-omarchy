@@ -24,10 +24,8 @@ Item {
     return d ? String(d) : root.home + "/.local/share/herdr-screensaver-plugin"
   }
   readonly property string statePath: dataDir + "/state"
-  readonly property string stayAwakeDir: {
-    var s = Quickshell.env("XDG_STATE_HOME")
-    return (s ? String(s) : root.home + "/.local/state") + "/omarchy/indicators"
-  }
+  // the same path Omarchy's idle service uses (read only here)
+  readonly property string stayAwakeDir: root.home + "/.local/state/omarchy/indicators"
   readonly property string stayAwakePath: stayAwakeDir + "/stay-awake"
 
   readonly property var idleConfig: shell && shell.shellConfig && shell.shellConfig.idle ? shell.shellConfig.idle : ({})

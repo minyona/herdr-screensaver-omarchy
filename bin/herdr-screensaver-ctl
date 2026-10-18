@@ -85,7 +85,7 @@ status() {
   echo "lock on wake: $(upper lock_on_wake)"
   echo "font size: $(get font_size)"
   echo "showing: $(onoff pgrep -f -- '[-]-(class|app-id)=org[.]omarchy[.]screensaver')"
-  echo "stay-awake: $(onoff test -e "${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/indicators/stay-awake")"
+  echo "stay-awake: $(onoff test -e "$HOME/.local/state/omarchy/indicators/stay-awake")"
   py=$(python3 -B -I -c 'import sys; print("%d.%d" % sys.version_info[:2]) if sys.version_info >= (3, 8) else sys.exit(1)' 2>/dev/null) &&
     echo "python3: ON ($py)" || echo "python3: OFF (needs python3 >= 3.8)"
   term=$(xdg-terminal-exec --print-id 2>/dev/null)
