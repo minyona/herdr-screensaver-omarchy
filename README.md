@@ -11,7 +11,7 @@ are 727 easter eggs, with a "found N of M" counter. It follows your Omarchy them
 
 - Omarchy 4 (the Quattro shell with plugins).
 - python3 3.8 or newer.
-- A terminal that Omarchy's own screensaver supports: Alacritty, Ghostty, Foot or Kitty.
+- Your default terminal (the one `xdg-terminal-exec --print-id` reports) must be Alacritty, Ghostty, Foot or Kitty. Having one installed is not enough; the plugin does not look for others.
 - What Omarchy's own screensaver launcher already uses: `hyprctl`, `jq`, `socat`, `xdg-terminal-exec`.
 
 ## Install
@@ -143,7 +143,7 @@ rm -rf ~/.local/share/herdr-screensaver-plugin
 - **Nothing happens at idle.** Run `omarchy-shell herdr-screensaver status`. The takeover must be ON, and the idle
   monitor ARMED. Stay-awake must be OFF. An idle inhibitor (a video playing, for example) also holds it back.
 - **"Screensaver only runs in Alacritty, Foot, Ghostty, or Kitty".** Your default terminal is another one (`status`
-  shows which). Set one of those four as your default terminal.
+  shows which; so does `xdg-terminal-exec --print-id`). Set one of those four as your default terminal.
 - **A blank screen instead of herdr.** python3 is missing or older than 3.8. Waking still locks.
 - **The old one-liner install is still active.** `status` says `old one-liner install: DETECTED`. Remove it with its own
   command first: `~/.local/share/herdr-screensaver/omarchy/install.sh uninstall`. This plugin never touches it.
