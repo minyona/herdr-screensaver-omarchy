@@ -1,15 +1,17 @@
 # shellcheck shell=bash
-# shellcheck disable=SC2034  # LOW_WHICH, LOW_REPLY, LOW_MS and LOW_STATUS are read by session.sh
+# shellcheck disable=SC2034  # LOW_WHICH, LOW_REPLY, LOW_MS, LOW_STATUS and LOW_WHY are read by session.sh
 # Lock on wake, sourced by session.sh (no side effects when sourced; needs $DATA).
 # Waking herdr (key, mouse, focus loss, the window closing, a signal, the engine ending) must leave
 # Omarchy's own lock screen up: request the lock through Omarchy's lock plugin (omarchy-shell lock ...,
 # the IPC in shell/plugins/lock/Service.qml), wait until it reports "secure", and only then let the
-# screensaver windows close (closing them makes the idle plugin cancel its own lock). When that cannot
-# be confirmed, low_fallback logs it, sends a critical notification and still tries every other lock.
+# screensaver windows close (closing them makes the idle plugin cancel its own lock). low_attempt is one
+# such try. When it fails, low_alert logs it, sends a critical notification and asks logind to lock;
+# nothing here closes the windows then (no omarchy-system-lock: its pkill would): session.sh keeps them
+# up and retries (low_backoff_ms) until a lock is secure.
 # Log: $DATA/lock.log, one line per event, always on (capped at about 200 lines).
-# Time: one budget (low_deadline, set when the exit starts) ends at LOW_STOP, by which the windows are
-# closed (< 5 s). The lock phase (every IPC call, the secure wait, the re-asks and their sleeps) ends
-# LOW_SYSLOCK_MS earlier, at LOW_END, leaving room for the fallback's commands (0.5 s each at most) and
+# Time: one budget (low_deadline, set when the exit starts and again by each low_attempt) ends at LOW_STOP,
+# < 5 s later. The lock phase (every IPC call, the secure wait, the re-asks and their sleeps) ends
+# LOW_SYSLOCK_MS earlier, at LOW_END, leaving room for the alert's commands (0.5 s each at most) or
 # omarchy-system-lock (a 0.3 s IPC limit plus its "timeout 1s pidwait -x ttfx", a full second while a ttfx
 # ignores SIGTERM). Nothing is waited for past LOW_STOP: what still runs then finishes on its own.
 
@@ -115,8 +117,23 @@ low_wait_secure() {
   done
 }
 
-# the lock could not be confirmed: never quiet. Log, notify (critical), then every other lock there is.
-low_fallback() {
+# low_attempt: one lock attempt with a fresh budget (low_deadline 4500): request it, then wait up to 3 s
+# for "secure" (asking again while the plugin does not hold the request). Succeeds only when secure;
+# otherwise LOW_WHY says why.
+low_attempt() {
+  LOW_WHY=""
+  low_deadline 4500
+  if ! command -v omarchy-shell >/dev/null 2>&1; then LOW_WHY="omarchy-shell not found"; return 1; fi
+  if ! low_request; then LOW_WHY="lock refused: ${LOW_REPLY:-no reply}"; return 1; fi
+  low_log "requested reply=ok"
+  if low_wait_secure 3000 ask; then low_log "secure after ${LOW_MS}ms"; return 0; fi
+  LOW_WHY="lock requested but not secure within 3s (status: ${LOW_STATUS:-no reply})"
+  return 1
+}
+
+# the lock could not be confirmed: never quiet. Log, notify (critical), ask logind to lock. It does not
+# close anything (no omarchy-system-lock): the windows stay up until a lock is secure.
+low_alert() {
   local why=$1
   low_log "FALLBACK: $why"
   if command -v logger >/dev/null 2>&1; then low_bounded 500 logger -t herdr-screensaver "lock on wake: FALLBACK: $why"; fi
@@ -129,5 +146,12 @@ low_fallback() {
     low_bounded 500 loginctl lock-session
     low_log "loginctl lock-session sent (Omarchy 3: hypridle locks; Omarchy 4: nothing listens to it)"
   fi
-  low_system_lock
+}
+
+# low_backoff_ms <i> <base ms>: the wait before retry <i> (1, 2, ...): base, 2*base, 4*base, ..., at most 30 s
+low_backoff_ms() {
+  local i=$1 ms=$2
+  while ((i > 1 && ms < 30000)); do ms=$((ms * 2)); i=$((i - 1)); done
+  ((ms <= 30000)) || ms=30000
+  echo "$ms"
 }

@@ -8,7 +8,9 @@
 # the engine crashing or exiting non-zero) goes through on_exit, which asks Omarchy's lock to lock and waits
 # until it is secure BEFORE the screensaver windows close (pkill, like Omarchy), unless Omarchy is
 # already locking, or lock on wake is off (state lock_on_wake=off). If the lock cannot be confirmed it
-# says so in $DATA/lock.log and a critical notification.
+# says so in $DATA/lock.log and a critical notification, and the windows stay up (lock_failed_loop):
+# "Lock failed" on screen, retries with growing waits (a key retries at once), then a wait for a key;
+# they close only once a lock is secure (or Omarchy's own lock closes them).
 # $DATA is ${HERDR_SS_DATA:-~/.local/share/herdr-screensaver-plugin} (the plugin's only data dir).
 # Debug (HERDR_SS_DEBUG=1, or the file $DATA/debug): sizes and TERM go to $DATA/debug.log. While the file
 # $DATA/print-size exists, the terminal shows its size and layout (--print-size) instead of the screensaver.
@@ -64,6 +66,96 @@ close_windows() {
   low_log "windows closed"
 }
 
+# Test knobs (not user settings): retries per round (1..20) and the first retry's wait (100..60000 ms)
+lock_retries=${HERDR_SS_LOCK_RETRIES:-5}
+{ [[ $lock_retries =~ ^[1-9][0-9]?$ ]] && ((lock_retries <= 20)); } || lock_retries=5
+lock_backoff=${HERDR_SS_LOCK_BACKOFF_MS:-2000}
+{ [[ $lock_backoff =~ ^[1-9][0-9]{2,4}$ ]] && ((lock_backoff <= 60000)); } || lock_backoff=2000
+
+ms_sleep() { sleep "$(printf '%d.%03d' $(($1 / 1000)) $(($1 % 1000)))"; }
+
+# key_wait <ms>: wait for a key on the terminal (fd 3) for <ms> (0: no limit), in slices of 1 s at most;
+# lock_failed_loop has put the tty in -icanon -echo -isig (Ctrl+C is a key there, not a signal, also between
+# two waits). Returns 0 on a key, 1 when the time is up, 2 when the terminal is gone (stty fails, or reads
+# come back empty at once three times in a row). The rest of an escape sequence (an arrow key) is read away
+# with the key. Not bash's read -n (it turns isig back on), not dd.
+key_wait() {
+  local ms=$1 end t0 dt n quick=0 rc=1
+  end=$(($(low_now_ms) + ms))
+  while :; do
+    dt=10
+    if ((ms > 0)); then
+      dt=$(((end - $(low_now_ms)) / 100))
+      ((dt > 0)) || break
+      ((dt <= 10)) || dt=10
+    fi
+    stty min 0 time "$dt" <&3 2>/dev/null || { rc=2; break; }
+    t0=$(low_now_ms)
+    n=$(head -c 1 <&3 2>/dev/null | wc -c)
+    if ((n > 0)); then
+      stty min 0 time 0 <&3 2>/dev/null && head -c 256 <&3 >/dev/null 2>&1
+      rc=0; break
+    fi
+    if (($(low_now_ms) - t0 < 50)); then
+      quick=$((quick + 1)); ((quick < 3)) || { rc=2; break; }
+    else quick=0; fi
+  done
+  return "$rc"
+}
+
+fail_screen() {   # <first line> <why>
+  printf '\033[2J\033[H%s\n\nherdr screensaver: the screen did not lock: %s\nLog: %s\n' "$1" "$2" "$DATA/lock.log" 2>/dev/null
+}
+
+# The lock failed ($1 says why) and the windows must stay up. A round: the alert (FALLBACK, critical
+# notification, logind), then up to $lock_retries retries, the waits before them growing from $lock_backoff ms
+# (low_backoff_ms; a key retries at once). After a round: wait for a key (no time limit), then a new round.
+# Ends only with a secure lock (then Omarchy's lock steps and close_windows, as on success), or when the
+# terminal is gone: the round ends on its timer, then it exits without closing anything.
+lock_failed_loop() {
+  local why=$1 r=0 i gap how t0 left tty=1 saved
+  saved=$(stty -g <&3 2>/dev/null) && stty -icanon -echo -isig <&3 2>/dev/null
+  while :; do
+    r=$((r + 1))
+    low_deadline 4500
+    low_alert "$why"
+    for ((i = 1; i <= lock_retries; i++)); do
+      gap=$(low_backoff_ms "$i" "$lock_backoff")
+      how=timer
+      if [ -n "$tty" ]; then
+        fail_screen "Lock failed, retrying in $(((gap + 999) / 1000))s (attempt $i/$lock_retries). Press a key to retry now." "$why"
+        t0=$(low_now_ms)
+        key_wait "$gap"
+        case $? in
+        0) how=key ;;
+        2) tty=""; left=$((gap - ($(low_now_ms) - t0))); ((left <= 0)) || ms_sleep "$left" ;;
+        esac
+      else
+        ms_sleep "$gap"
+      fi
+      low_log "retry $r.$i/$lock_retries ($how)"
+      if low_attempt; then
+        [ -z "$saved" ] || stty "$saved" <&3 2>/dev/null
+        cursor_invisible false
+        low_system_lock   # Omarchy's own lock steps; its pkill closes the windows
+        close_windows
+        exit 0
+      fi
+      why=$LOW_WHY
+      low_log "retry $r.$i/$lock_retries failed: $why"
+      if command -v loginctl >/dev/null 2>&1; then low_bounded 500 loginctl lock-session; fi
+    done
+    low_log "round $r: $lock_retries retries failed; windows stay up, waiting for a key"
+    if [ -n "$tty" ]; then
+      fail_screen "Lock failed. Press a key to retry." "$why"
+      key_wait 0 && continue
+    fi
+    low_log "terminal gone after a failed lock: exiting, windows not closed"
+    cursor_invisible false
+    exit 0
+  done
+}
+
 child=""
 stty_saved=""
 watcher=""
@@ -85,28 +177,24 @@ on_exit() {
     wait "$child" 2>/dev/null
   fi
   [ -z "$stty_saved" ] || stty "$stty_saved" <&3 2>/dev/null
+  [ -z "$blank" ] || printf '\033[?1003l\033[?1006l\033[?25h' 2>/dev/null   # mouse reports off, cursor back
   low_log "exit reason=$1"
   if ! low_enabled "$DATA/state"; then
     low_log "off (opt-out)"
   elif ! command -v omarchy-shell >/dev/null 2>&1; then
-    low_fallback "omarchy-shell not found"
+    lock_failed_loop "omarchy-shell not found"   # never returns to close_windows below
   elif low_already_locked; then
     # Omarchy's own lock (or the idle plugin's lockSystem) is running: no second request
     low_log "already locked ($LOW_WHICH): not requesting a lock"
     if low_wait_secure 3000; then low_log "secure after ${LOW_MS}ms"
     else low_log "already locked but not secure after 3s (Omarchy's own lock is in progress)"; fi
-  elif ! low_request; then
-    low_fallback "lock refused: ${LOW_REPLY:-no reply}"
+  elif low_attempt; then
+    cursor_invisible false
+    low_system_lock   # Omarchy's own lock steps; its pkill closes the windows
   else
-    low_log "requested reply=ok"
-    if low_wait_secure 3000 ask; then
-      low_log "secure after ${LOW_MS}ms"
-      cursor_invisible false
-      low_system_lock   # Omarchy's own lock steps; its pkill closes the windows
-    else
-      low_fallback "lock requested but not secure within 3s (status: ${LOW_STATUS:-no reply})"
-    fi
+    lock_failed_loop "$LOW_WHY"   # never returns to close_windows below
   fi
+  # only: lock on wake off, already locked, or secure
   close_windows
   exit 0
 }
@@ -157,8 +245,11 @@ if [ -n "$blank" ]; then
   # Ctrl+C and Ctrl+\ become bytes that wake it (and lock), not signals the background reader ignores
   # (-isig; not bash's read -n, whose cbreak mode turns isig back on); on_exit restores the tty
   stty_saved=$(stty -g <&3 2>/dev/null) && stty -icanon -echo -isig min 1 time 0 <&3 2>/dev/null
-  # black screen, mouse motion reported (so a mouse move wakes it), one key or mouse byte ends it
-  (printf '\033[2J\033[H\033[?25l\033[?1003h\033[?1006h'; head -c 1 <&3 >/dev/null; printf '\033[?1003l\033[?1006l\033[?25h') &
+  # black screen, mouse motion reported (so a mouse move wakes it), one key or mouse byte ends it. The reader
+  # is head itself (child), so on_exit's kill ends it and no stale reader eats a key meant for lock_failed_loop;
+  # on_exit turns the mouse reports off again.
+  printf '\033[2J\033[H\033[?25l\033[?1003h\033[?1006h'
+  head -c 1 <&3 >/dev/null &
 else
   mode=()
   if [ -e "$DATA/print-size" ]; then

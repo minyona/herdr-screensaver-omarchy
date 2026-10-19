@@ -16,7 +16,8 @@ BASH5=${BASH5:-$(command -v /opt/homebrew/bin/bash /usr/local/bin/bash bash 2>/d
 # shellcheck disable=SC2016  # expanded by the bash being tested, not here
 "$BASH5" -c '[ "${BASH_VERSINFO[0]}" -ge 4 ]' || { echo "need bash >= 4 (set BASH5)"; exit 2; }
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/herdr-plugin-test.XXXXXX")
-trap 'pkill -f "$WORK" 2>/dev/null; rm -rf "$WORK"' EXIT   # every process started here has $WORK in its argv
+# every process started here has $WORK in its argv; -KILL too: a session in its failed-lock loop drops TERM
+trap 'pkill -f "$WORK" 2>/dev/null; pkill -KILL -f "$WORK" 2>/dev/null; rm -rf "$WORK"' EXIT
 PASS=0; FAIL=0
 ok() { echo "ok   $*"; PASS=$((PASS+1)); }
 bad() { echo "FAIL $*"; FAIL=$((FAIL+1)); }
@@ -264,41 +265,46 @@ LOPT=()
 [ "$le" = 0 ] && [ "$(grep -c '^omarchy-shell lock lock$' "$T/log")" = 1 ] && llog "already locked (isLocked)" && llog "exit reason=signal:HUP" \
   && ok "25j. idle plugin's lockSystem first, then SIGHUP: exactly one lock lock (system-lock's own); session.sh says already locked" || { bad "25j. $res"; cat "$T/log"; }
 
-# 25k: fallbacks: logged, critical notification and loginctl lock-session BEFORE the windows close; bounded
-fb_case() {   # name, why (in lock.log), limit, [VAR=value...]
-  local name=$1 why=$2 lim=$3 nl ll kl; shift 3
-  lrun key "$@"
-  nl=$(first "$T/log" '^omarchy-notification-send -u critical Screen did not lock'); ll=$(first "$T/log" '^loginctl lock-session$'); kl=$(first "$T/log" '^pkill -f \[o\]rg')
-  if [ "$le" = 0 ] && llog "FALLBACK: $why" && [ -n "$nl" ] && [ -n "$ll" ] && [ -n "$kl" ] && [ "$nl" -lt "$ll" ] && [ "$ll" -lt "$kl" ] && le_s "$lim" \
-     && grep -q '^logger -t herdr-screensaver' "$T/log"; then
-    ok "25k. fallback ($name): FALLBACK in lock.log, critical notification, then loginctl lock-session, then pkill; exit 0 in ${lt}s (<= ${lim}s)"
-  else bad "25k. fallback $name: $res"; echo "notify line $nl, loginctl line $ll, window pkill line $kl, exit $le, took $lt"; cat "$T/log"; cat "$H/$LL_REL" 2>/dev/null; fi
+# 25k: a failed lock: FALLBACK logged, critical notification, logger and loginctl lock-session, and the windows
+# stay up: no omarchy-system-lock (no switchxkblayout, no timeout pidwait), no pkill at all; still running at
+# the limit (the harness kills it: exit -9), retrying, bounded per round (3 retries here: <= 4 attempts)
+FENV=(HERDR_SS_LOCK_BACKOFF_MS=200 HERDR_SS_LOCK_RETRIES=3)
+nlock() { grep -c '^omarchy-shell lock lock$' "$T/log"; }
+nkill() { grep -c '^pkill -f \[o\]rg\.omarchy\.screensaver$' "$T/log"; }
+fail_case() {   # id, name, why (in lock.log), limit, lock lock calls (exact: the round ended; "": at most 4 per attempt), [VAR=value...]
+  local id=$1 name=$2 why=$3 lim=$4 want=$5 nc cnt=0; shift 5
+  LOPT=(--limit "$lim"); lrun key "${FENV[@]}" "$@"; LOPT=()
+  nc=$(nlock)
+  if [ -n "$want" ]; then [ "$nc" = "$want" ] && llog "round 1: 3 retries failed; windows stay up, waiting for a key" && cnt=1
+  else [ "$nc" -le 16 ] && cnt=1; fi
+  if [ "$le" = -9 ] && llog "FALLBACK: $why" && grep -q '^omarchy-notification-send -u critical Screen did not lock' "$T/log" && grep -q '^loginctl lock-session$' "$T/log" \
+     && grep -q '^logger -t herdr-screensaver' "$T/log" && [ "$(nkill)" = 0 ] && ! grep -q -E '^(pkill|hyprctl switchxkblayout|timeout )' "$T/log" \
+     && llog "retry 1.1/3 (timer)" && [ $cnt = 1 ]; then
+    ok "$id. failed lock ($name): FALLBACK in lock.log, critical notification, logger, loginctl; no system-lock, no pkill; still up after ${lim}s, retrying ($nc lock calls)"
+  else bad "$id. failed lock $name: $res"; echo "lock calls $nc (want ${want:-<= 16}), window kills $(nkill), exit $le"; cat "$T/log"; cat "$H/$LL_REL" 2>/dev/null; fi
 }
 make_tree v4real
 rm "$T/bin/omarchy-shell"
-fb_case "no omarchy-shell" "omarchy-shell not found" 2
+fail_case 25k "no omarchy-shell" "omarchy-shell not found" 4 0
 make_tree v4real
-fb_case "missing-pam" "lock refused: missing-pam" 2 FAKE_SHELL=missing-pam
-fb_case "shell down" "lock refused: omarchy-shell: the shell is not running" 2 FAKE_SHELL=down
-fb_case "hang" "lock refused: omarchy-shell: lock lock not responding" 5 FAKE_SHELL=hang
-fb_case "never secure" "lock requested but not secure within 3s" 5 FAKE_SHELL=never-secure
+fail_case 25k "missing-pam" "lock refused: missing-pam" 4 4 FAKE_SHELL=missing-pam
+fail_case 25k "shell down" "lock refused: omarchy-shell: the shell is not running" 4 4 FAKE_SHELL=down
+fail_case 25k "hang" "lock refused: omarchy-shell: lock lock not responding" 8 4 FAKE_SHELL=hang
+fail_case 25k "never secure" "lock requested but not secure within 3s" 8 "" FAKE_SHELL=never-secure
 # 25v (fail-loops 1 and 2): every lock call takes the full 1 s and status never says "requested":true, so it
-# keeps asking again; and a ttfx that ignores SIGTERM, so the real omarchy-system-lock's "timeout 1s pidwait
-# -x ttfx" runs its full second (the fake timeout really waits, and the fake pidwait only dies of its TERM:
-# a TERM ignored by session.sh would leak into it and hang). One budget still bounds the request, the
-# re-asks, their sleeps, the fallback and omarchy-system-lock: the process ends within 5 s of the key.
+# keeps asking again; one budget per attempt still bounds the request, the re-asks and their sleeps. With a
+# ttfx that ignores SIGTERM nothing changes: omarchy-system-lock (and its pidwait) never runs after a failure.
 fired() { grep -q '^timeout fired after 1s: pidwait -x ttfx$' "$T/log"; }
-syslock_cut() { llog "omarchy-system-lock still running after"; }
-fb_case "1 s lock calls, never requested" "lock requested but not secure within 3s" 5 FAKE_SHELL=slow-unrequested
-[ "$(grep -c '^omarchy-shell lock lock$' "$T/log")" -ge 3 ] && ok "25v. ... it did ask again ($(grep -c '^omarchy-shell lock lock$' "$T/log") lock calls incl. system-lock's) and still closed in ${lt}s" || { bad "25v. re-asks"; cat "$T/log"; }
-fb_case "1 s lock calls, never requested, ttfx ignores SIGTERM" "lock requested but not secure within 3s" 5 FAKE_SHELL=slow-unrequested FAKE_TTFX=stubborn
-{ fired || syslock_cut; } && grep -q '^timeout 1s pidwait -x ttfx$' "$T/log" && [ "$(grep -c '^omarchy-shell lock lock$' "$T/log")" -ge 3 ] && grep -qx "pkill -f \[o\]rg.omarchy.screensaver" "$T/log" \
-  && ok "25v. ... re-asks + the real system-lock reaching its 1 s pidwait ($(fired && echo 'timeout fired' || echo 'cut at the bound, logged')), windows closed in ${lt}s (<= 5 s)" || { bad "25v. stubborn ttfx: $res"; cat "$T/log" "$H/$LL_REL"; }
-fb_case "never secure, ttfx ignores SIGTERM" "lock requested but not secure within 3s" 5 FAKE_SHELL=never-secure FAKE_TTFX=stubborn
-fired && ok "25v. never secure + ttfx ignores SIGTERM: pidwait waited 1 s, closed in ${lt}s (<= 5 s)" || { bad "25v. never-secure stubborn"; cat "$T/log"; }
-fb_case "slow fallback (notification takes 2 s)" "lock requested but not secure within 3s" 5 FAKE_SHELL=slow-unrequested FAKE_TTFX=stubborn FAKE_NOTIFY_SLEEP=2
-llog "omarchy-notification-send still running after" && syslock_cut \
-  && ok "25v. a 2 s notification: not waited for past 0.5 s (logged), omarchy-system-lock cut at the bound (logged), windows closed in ${lt}s (<= 5 s)" || { bad "25v. slow fallback"; cat "$T/log" "$H/$LL_REL"; }
+fail_case 25v "1 s lock calls, never requested" "lock requested but not secure within 3s" 8 "" FAKE_SHELL=slow-unrequested
+[ "$(nlock)" -ge 3 ] && ok "25v. ... it did ask again ($(nlock) lock calls) and the windows stayed up" || { bad "25v. re-asks"; cat "$T/log"; }
+fail_case 25v "1 s lock calls, never requested, ttfx ignores SIGTERM" "lock requested but not secure within 3s" 8 "" FAKE_SHELL=slow-unrequested FAKE_TTFX=stubborn
+! grep -q 'pidwait' "$T/log" && [ "$(nlock)" -ge 3 ] && ! grep -qx "pkill -f \[o\]rg.omarchy.screensaver" "$T/log" \
+  && ok "25v. ... re-asks ($(nlock) lock calls) but no omarchy-system-lock after the failure (no pidwait of ttfx), windows not closed" || { bad "25v. stubborn ttfx: $res"; cat "$T/log" "$H/$LL_REL"; }
+fail_case 25v "never secure, ttfx ignores SIGTERM" "lock requested but not secure within 3s" 8 "" FAKE_SHELL=never-secure FAKE_TTFX=stubborn
+! grep -q 'pidwait' "$T/log" && ! fired && ok "25v. never secure + ttfx ignores SIGTERM: no omarchy-system-lock, so no pidwait; windows not closed" || { bad "25v. never-secure stubborn"; cat "$T/log"; }
+fail_case 25v "slow alert (notification takes 2 s)" "lock requested but not secure within 3s" 8 "" FAKE_SHELL=slow-unrequested FAKE_TTFX=stubborn FAKE_NOTIFY_SLEEP=2
+llog "omarchy-notification-send still running after" \
+  && ok "25v. a 2 s notification: not waited for past 0.5 s (logged); the retries go on" || { bad "25v. slow alert"; cat "$T/log" "$H/$LL_REL"; }
 lrun key FAKE_TTFX=stubborn
 [ "$le" = 0 ] && fired && order_ok "$T/log" '^omarchy-shell lock lock$' 'secure=true$' '^timeout 1s pidwait' '^pkill -f \[o\]rg\.omarchy\.screensaver$' && le_s 2.5 && llog "secure after " \
   && ok "25v. secure + ttfx ignores SIGTERM: lock -> secure -> system-lock (pidwait 1 s) -> pkill; ${lt}s" || { bad "25v. secure stubborn: $res"; cat "$T/log"; }
@@ -448,6 +454,66 @@ grep -q " session /dev/[^ ]* stty size 50 160$" "$H/$FLOG_REL" && ok "F4. sessio
 # shellcheck disable=SC2016
 grep -qF "Each monitor gets the largest font size (8 to 18 pt)" "$RM" && grep -qF "fontSize 11.5" "$RM" && grep -qF "font.log" "$RM" && grep -qF "9 pt" "$RM" \
   && ok "F5. README: font size per monitor, the XPS example (9 pt), fontSize, font.log" || bad "F5. docs"
+
+echo "== 27. a failed lock never closes the windows: retries, a key retries, signals, the terminal gone"
+# (25k/25v cover every failure reason; here: what happens next.) A window kill: pkill -f [o]rg.omarchy.screensaver
+make_tree v4real
+# 27a (AC2): refused once, then the timer retry locks: secure, then the real system-lock and the windows close
+lrun key "${FENV[@]}" FAKE_LOCK_FAILS=1
+sw=$(first "$T/log" '^hyprctl switchxkblayout'); sec=$(first "$T/log" 'secure=true$')
+[ "$le" = 0 ] && order_ok "$T/log" '^omarchy-notification-send -u critical' '^loginctl lock-session$' 'secure=true$' '^hyprctl switchxkblayout' '^timeout 1s pidwait -x ttfx$' '^pkill -f \[o\]rg\.omarchy\.screensaver$' \
+  && [ -n "$sw" ] && [ "$sw" -gt "$sec" ] && llog "FALLBACK: lock refused: missing-pam" && llog "retry 1.1/3 (timer)" && llog "secure after " && llog "windows closed" && le_s 6 \
+  && ( prev=0; for re in 'FALLBACK: lock refused: missing-pam' 'retry 1\.1/3 \(timer\)' 'secure after ' 'windows closed'; do l=$(first "$H/$LL_REL" "$re"); [ -n "$l" ] && [ "$l" -gt "$prev" ] || exit 1; prev=$l; done ) \
+  && ok "27a. refused once, then the timer retry: FALLBACK, notification, loginctl, then secure=true, then the real system-lock and pkill; exit 0 in ${lt}s" || { bad "27a. fail then succeed: $res"; cat "$T/log" "$H/$LL_REL"; }
+# 27b (AC3): refused for good: bounded rounds, the windows stay up, the screen says so
+LOPT=(--expect 'Lock failed. Press a key to retry.')
+lrun key "${FENV[@]}" FAKE_SHELL=missing-pam
+LOPT=()
+r_ok=1; for i in 1 2 3; do llog "retry 1.$i/3 (timer)" && llog "retry 1.$i/3 failed: lock refused: missing-pam" || r_ok=0; done
+[ "$le" = -9 ] && [ "$(nkill)" = 0 ] && ! grep -q switchxkblayout "$T/log" && [ "$(nlock)" = 4 ] && [ $r_ok = 1 ] && llog "round 1: 3 retries failed; windows stay up, waiting for a key" \
+  && [ "$(grep -c '^omarchy-notification-send -u critical' "$T/log")" = 1 ] && grep -q '^loginctl lock-session$' "$T/log" && [ "$(echo "$res" | jq -r .expect)" = true ] \
+  && ok "27b. refused for good: 4 lock calls (1 + 3 retries), each logged, round end logged, 1 notification; 'Lock failed. Press a key to retry.' shown; no window kill, no system-lock" || { bad "27b. permanent: $res"; cat "$T/log" "$H/$LL_REL"; }
+# 27c (AC4): a key during a 20 s wait retries at once
+LOPT=(--then key --then-on 'Lock failed, retrying in' --limit 5)
+lrun key FAKE_SHELL=missing-pam HERDR_SS_LOCK_BACKOFF_MS=20000 HERDR_SS_LOCK_RETRIES=3
+LOPT=()
+[ "$(echo "$res" | jq -r .then_at)" != null ] && [ "$(nlock)" = 2 ] && llog "retry 1.1/3 (key)" && [ "$le" = -9 ] && [ "$(nkill)" = 0 ] \
+  && ok "27c. a key during the 20 s wait: retried at once (retry 1.1/3 (key), 2 lock calls in 5 s), still up" || { bad "27c. key retry: $res"; cat "$T/log" "$H/$LL_REL"; }
+# 27d (AC5): a key (or Ctrl+C: a byte here, not a signal) after the round starts a new round
+for k in key ctrlc; do
+  LOPT=(--then "$k" --then-on 'Lock failed. Press a key to retry.' --limit 5)
+  lrun key FAKE_SHELL=missing-pam HERDR_SS_LOCK_BACKOFF_MS=200 HERDR_SS_LOCK_RETRIES=1
+  LOPT=()
+  [ "$(grep -c 'FALLBACK: ' "$H/$LL_REL")" = 2 ] && [ "$(grep -c '^omarchy-notification-send -u critical' "$T/log")" = 2 ] && [ "$(nlock)" -ge 3 ] && llog "retry 2.1/1" \
+    && [ "$le" = -9 ] && [ "$(nkill)" = 0 ] \
+    && ok "27d. $k after the round: a new round (2 FALLBACK, 2 notifications, retry 2.1/1, $(nlock) lock calls), no exit, no window kill" || { bad "27d. $k new round: $res"; cat "$T/log" "$H/$LL_REL"; }
+done
+# 27e (AC6): signals in the failed state are dropped (HUP ignored): on_exit ran once, the retries go on
+for sig in term int hup quit; do
+  LOPT=(--then "$sig" --then-on 'Lock failed')
+  lrun key "${FENV[@]}" FAKE_SHELL=missing-pam
+  LOPT=()
+  [ "$(echo "$res" | jq -r .then_at)" != null ] && [ "$le" = -9 ] && [ "$(nkill)" = 0 ] && [ "$(grep -c 'exit reason=' "$H/$LL_REL")" = 1 ] && [ "$(nlock)" = 4 ] \
+    && ok "27e. $sig in the failed state: still up, one exit reason, the round ran on (4 lock calls), no window kill" || { bad "27e. $sig: $res"; cat "$T/log" "$H/$LL_REL"; }
+done
+# 27f (AC7): a signal during a successful (slow) exit does not cut it short
+LOPT=(--then term --then-delay 0.3)
+lrun key FAKE_SECURE_AFTER=8
+LOPT=()
+[ "$le" = 0 ] && order_ok "$T/log" '^omarchy-shell lock lock$' 'secure=true$' '^pkill -f \[o\]rg\.omarchy\.screensaver$' && [ "$(grep -c 'exit reason=' "$H/$LL_REL")" = 1 ] && llog "exit reason=input" && llog "windows closed" \
+  && ok "27f. TERM 0.3 s into a slow secure wait: still lock -> secure -> pkill, one exit reason=input, exit 0" || { bad "27f. signal during exit: $res"; cat "$T/log" "$H/$LL_REL"; }
+# 27g (AC8): the terminal gone after a failed lock: the round still runs on its timer, then it exits, closing nothing
+lrun hupclose "${FENV[@]}" FAKE_SHELL=missing-pam
+[ "$le" = 0 ] && [ "$(nkill)" = 0 ] && [ "$(nlock)" = 4 ] && llog "terminal gone after a failed lock: exiting, windows not closed" && le_s 7.5 && [ "$(wc -l < "$H/$LL_REL")" -lt 30 ] \
+  && ok "27g. terminal gone: the round ran (4 lock calls), logged, exit 0 in ${lt}s by itself, no window kill, no busy loop ($(wc -l < "$H/$LL_REL" | tr -d ' ') lock.log lines)" || { bad "27g. tty gone: $res"; cat "$T/log" "$H/$LL_REL"; }
+# 27h (AC13): blank screen (no engine), TERM, failed lock: the retry key reaches the loop (no stale reader eats it)
+make_tree v4real
+mkdir -p "$T/app/lib"; cp "$REPO/lib/session.sh" "$REPO/lib/lock-on-wake.sh" "$T/app/lib/"
+SESS="$T/app/lib/session.sh"; LOPT=(--ready '\x1b[2J' --then key --then-on 'Lock failed')
+lrun term "${FENV[@]}" FAKE_SHELL=missing-pam
+SESS="$REPO/lib/session.sh"; LOPT=()
+llog "engine missing" && llog "(key)" && [ "$(nkill)" = 0 ] && [ "$le" = -9 ] \
+  && ok "27h. blank screen, TERM, failed lock: a key retries (retry ... (key)), no window kill" || { bad "27h. blank stale reader: $res"; cat "$T/log" "$H/$LL_REL"; }
 
 echo "---- $PASS ok, $FAIL failed"
 [ $FAIL = 0 ]
