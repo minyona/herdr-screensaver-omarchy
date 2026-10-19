@@ -11,7 +11,7 @@ are 727 easter eggs, with a "found N of M" counter. It follows your Omarchy them
 
 - Omarchy 4 (the Quattro shell with plugins).
 - python3 3.8 or newer.
-- Your default terminal (the one `xdg-terminal-exec --print-id` reports) must be Alacritty, Ghostty, Foot or Kitty. Having one installed is not enough; the plugin does not look for others.
+- Your default terminal (the one `xdg-terminal-exec --print-id` reports; Omarchy's default is Foot) must be Alacritty, Ghostty, Foot or Kitty. Having one installed is not enough; the plugin does not look for others. To change it: `omarchy-default-terminal <name>`.
 - What Omarchy's own screensaver launcher already uses: `hyprctl`, `jq`, `socat`, `xdg-terminal-exec`.
 
 ## Install
