@@ -1,9 +1,10 @@
 # shellcheck shell=bash
-# shellcheck disable=SC2034  # LOW_WHICH, LOW_REPLY, LOW_MS, LOW_STATUS and LOW_WHY are read by session.sh
+# shellcheck disable=SC2034  # LOW_WHICH, LOW_REPLY, LOW_MS, LOW_STATUS, LOW_SECURE and LOW_WHY are read by session.sh
 # Lock on wake, sourced by session.sh (no side effects when sourced; needs $DATA).
 # Waking herdr (key, mouse, focus loss, the window closing, a signal, the engine ending) must leave
 # Omarchy's own lock screen up: request the lock through Omarchy's lock plugin (omarchy-shell lock ...,
-# the IPC in shell/plugins/lock/Service.qml), wait until it reports "secure", and only then let the
+# the IPC in shell/plugins/lock/Service.qml), wait until it reports "secure" (status "secure":true, the
+# compositor's confirmation; isLocked, "locked" and "requested" are only the request), and only then let the
 # screensaver windows close (closing them makes the idle plugin cancel its own lock). low_attempt is one
 # such try. When it fails, low_alert logs it, sends a critical notification and asks logind to lock;
 # nothing here closes the windows then (no omarchy-system-lock: its pkill would): session.sh keeps them
@@ -32,6 +33,7 @@ low_now_ms() {
 # (LOW_END). low_left: ms left of the lock phase; low_left_total: ms left of the whole budget.
 LOW_END=""
 LOW_STOP=""
+LOW_SECURE=""   # 1 once low_wait_secure saw "secure":true (never taken from the environment)
 LOW_SYSLOCK_MS=1500   # after the lock phase: the fallback's commands, then omarchy-system-lock (0.3 s IPC + 1 s pidwait + the rest)
 low_deadline() { LOW_STOP=$(($(low_now_ms) + $1)); LOW_END=$((LOW_STOP - LOW_SYSLOCK_MS)); }
 low_left() { if [ -n "$LOW_END" ]; then echo $((LOW_END - $(low_now_ms))); else echo 999999; fi; }
@@ -69,6 +71,7 @@ low_bounded() {
 # Omarchy's own lock steps (keyboard layout, 1Password, ttfx, then its pkill of the windows), with a short
 # IPC limit for its own lock request; waited for until LOW_STOP at most.
 low_system_lock() {
+  if [ "${LOW_SECURE:-}" != 1 ]; then low_log "BUG: system-lock without a secure lock refused"; return 1; fi
   command -v omarchy-system-lock >/dev/null 2>&1 || return 0
   OMARCHY_SHELL_IPC_TIMEOUT=0.3 low_bounded 999999 omarchy-system-lock
 }
@@ -78,7 +81,10 @@ low_enabled() {
   ! grep -qx 'lock_on_wake=off' "$1" 2>/dev/null
 }
 
-# already locked by Omarchy (its own lock, or the idle plugin's lockSystem)? sets LOW_WHICH
+# is someone already locking (Omarchy's own lock, or the idle plugin's lockSystem)? sets LOW_WHICH. A lock
+# requested, pending or held: isLocked = lockRequested || sessionLock.locked || sessionLock.secure (Omarchy
+# shell/plugins/lock/Service.qml:72, :949-951), true as soon as a lock is requested; session-locked = some
+# compositor lock, possibly a stranded one. NOT a confirmation: only low_wait_secure confirms.
 low_already_locked() {
   LOW_WHICH=""
   if [ "$(low_ipc 500 isLocked 2>/dev/null)" = true ]; then LOW_WHICH=isLocked; return 0; fi
@@ -98,16 +104,17 @@ low_request() {
 # most <ms> and never past the lock phase; with ask, request again while the plugin does not hold the
 # request (like omarchy-system-sleep-lock). Returns as soon as the time is up: no re-ask and no 0.1 s sleep
 # is started without room for it (a re-ask that used up the rest ends the wait).
-# Sets LOW_MS (time to secure) and LOW_STATUS (the last reply).
+# Sets LOW_MS (time to secure) and LOW_STATUS (the last reply); LOW_SECURE=1 only on "secure":true (the one
+# place it is set: close_windows and low_system_lock refuse without it).
 low_wait_secure() {
   local limit=$1 ask=${2:-} start s
-  start=$(low_now_ms); LOW_STATUS=""
+  start=$(low_now_ms); LOW_STATUS=""; LOW_SECURE=""
   # time for one more step of <ms>: inside <limit> and inside the lock phase
   room() { (($(low_now_ms) - start + $1 <= limit)) && (($(low_left) >= $1)); }
   while :; do
     s=$(low_ipc 500 status 2>/dev/null)
     [ -z "$s" ] || LOW_STATUS=$s
-    if [[ $s == *'"secure":true'* ]]; then LOW_MS=$(($(low_now_ms) - start)); return 0; fi
+    if [[ $s == *'"secure":true'* ]]; then LOW_SECURE=1; LOW_MS=$(($(low_now_ms) - start)); return 0; fi
     if [ -n "$ask" ] && [[ $s != *'"requested":true'* ]]; then
       room 1 || return 1
       low_ipc 1000 lock >/dev/null 2>&1
@@ -121,7 +128,7 @@ low_wait_secure() {
 # for "secure" (asking again while the plugin does not hold the request). Succeeds only when secure;
 # otherwise LOW_WHY says why.
 low_attempt() {
-  LOW_WHY=""
+  LOW_WHY=""; LOW_SECURE=""
   low_deadline 4500
   if ! command -v omarchy-shell >/dev/null 2>&1; then LOW_WHY="omarchy-shell not found"; return 1; fi
   if ! low_request; then LOW_WHY="lock refused: ${LOW_REPLY:-no reply}"; return 1; fi

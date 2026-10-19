@@ -253,10 +253,12 @@ for how in key focus term; do
     && order_ok "$T/log" 'secure=true$' '^pkill -f' && llog "already locked (isLocked)" \
     && ok "25i. already locked (isLocked true), $how: no lock lock, no switchxkblayout, pkill -f after secure=true" || { bad "25i. $how: $res"; cat "$T/log"; }
 done
-lrun key FAKE_SOLITARY_LOCK=1
-[ "$le" = 0 ] && [ "$(grep -c '^omarchy-shell lock lock$' "$T/log")" = 0 ] && ! grep -q switchxkblayout "$T/log" && llog "already locked (session-locked)" \
-  && llog "already locked but not secure after 3s" && le_s 5 \
-  && ok "25i. compositor lock (real omarchy-hyprland-session-locked: LOCK), isLocked false: no lock lock, no system-lock; logged; ${lt}s" || { bad "25i. solitary: $res"; cat "$T/log"; }
+# (1.0.2, replaces 1.0.1's check that the windows closed here after 3 s without secure) a compositor lock
+# alone is no confirmation: not secure within 3 s -> the failed-lock loop, whose retry locks; pkill after secure
+lrun key HERDR_SS_LOCK_BACKOFF_MS=200 HERDR_SS_LOCK_RETRIES=3 FAKE_SOLITARY_LOCK=1
+[ "$le" = 0 ] && order_ok "$T/log" '^omarchy-shell lock isLocked$' '^omarchy-shell lock lock$' 'secure=true$' '^hyprctl switchxkblayout' '^pkill -f \[o\]rg\.omarchy\.screensaver$' \
+  && ( prev=0; for re in 'already locked \(session-locked\)' 'FALLBACK: already locked \(session-locked\) but not secure' 'retry 1\.1/3' 'secure after ' 'windows closed'; do l=$(first "$H/$LL_REL" "$re"); [ -n "$l" ] && [ "$l" -gt "$prev" ] || exit 1; prev=$l; done ) \
+  && ok "25i. compositor lock only (real omarchy-hyprland-session-locked: LOCK), isLocked false: not secure in 3 s -> FALLBACK, the retry's lock lock -> secure -> system-lock -> pkill; ${lt}s" || { bad "25i. solitary: $res"; cat "$T/log" "$H/$LL_REL"; }
 
 # 25j: the idle plugin's lockSystem (the real omarchy-system-lock) while herdr runs, then its pkill's SIGHUP
 LOPT=(--before "$O/bin/omarchy-system-lock")
@@ -514,6 +516,46 @@ lrun term "${FENV[@]}" FAKE_SHELL=missing-pam
 SESS="$REPO/lib/session.sh"; LOPT=()
 llog "engine missing" && llog "(key)" && [ "$(nkill)" = 0 ] && [ "$le" = -9 ] \
   && ok "27h. blank screen, TERM, failed lock: a key retries (retry ... (key)), no window kill" || { bad "27h. blank stale reader: $res"; cat "$T/log" "$H/$LL_REL"; }
+
+echo "== 28. already locked (pending) never closes before secure"
+# isLocked is true as soon as a lock is requested (Omarchy lock Service.qml:72, :949-951); only status
+# "secure":true confirms it. FAKE_PENDING=1: a lock is already requested (pending) before the session asks.
+make_tree v4real
+# 28a (AC1): pending, never secure: the failed-lock loop, the windows stay up
+LOPT=(--expect 'Lock failed')
+lrun key "${FENV[@]}" FAKE_PENDING=1 FAKE_SHELL=never-secure
+LOPT=()
+[ "$le" = -9 ] && [ "$(nkill)" = 0 ] && ! grep -q switchxkblayout "$T/log" && llog "already locked (isLocked)" \
+  && llog "FALLBACK: already locked (isLocked) but not secure within 3s" && [ "$(grep -c '^omarchy-notification-send -u critical' "$T/log")" = 1 ] \
+  && llog "retry 1.1/3 (timer)" && [ "$(echo "$res" | jq -r .expect)" = true ] \
+  && ok "28a. pending, never secure: still up at the limit, 0 window kills, no system-lock; FALLBACK (already locked, not secure within 3s), 1 notification, retry 1.1/3; 'Lock failed' shown" || { bad "28a. pending never secure: $res"; cat "$T/log" "$H/$LL_REL"; }
+# 28b (AC2): pending, secure only after the session's own retry
+lrun key "${FENV[@]}" FAKE_PENDING=1 FAKE_SECURE_AFTER_LOCKS=1
+[ "$le" = 0 ] && order_ok "$T/log" '^omarchy-shell lock isLocked$' 'status secure=false$' '^omarchy-notification-send -u critical' '^omarchy-shell lock lock$' 'secure=true$' '^hyprctl switchxkblayout' '^pkill -f \[o\]rg\.omarchy\.screensaver$' \
+  && ( prev=0; for re in 'FALLBACK: already locked \(isLocked\)' 'retry 1\.1/3' 'secure after ' 'windows closed'; do l=$(first "$H/$LL_REL" "$re"); [ -n "$l" ] && [ "$l" -gt "$prev" ] || exit 1; prev=$l; done ) && le_s 8 \
+  && ok "28b. pending, secure only after the retry: isLocked, secure=false, notification, lock lock, secure=true, system-lock, pkill (no pkill before secure); exit 0 in ${lt}s" || { bad "28b. pending then retry: $res"; cat "$T/log" "$H/$LL_REL"; }
+# 28c (AC3): pending, secure within 3 s: no request of its own, no system-lock, pkill after secure
+lrun key FAKE_PENDING=1
+[ "$le" = 0 ] && [ "$(lseq)" = "$(printf '%s\n' "omarchy-shell lock isLocked" "omarchy-shell lock status secure=false" "omarchy-shell lock status secure=true" "pkill -f [o]rg.omarchy.screensaver")" ] \
+  && [ "$(nlock)" = 0 ] && ! grep -q switchxkblayout "$T/log" && ! llog "FALLBACK" && order_ok "$T/log" 'secure=true$' '^pkill -f' \
+  && llog "already locked (isLocked)" && llog "secure after " && le_s 5 \
+  && ok "28c. pending, secure within 3 s: isLocked, secure=false, secure=true, pkill (exact); no lock lock, no FALLBACK; ${lt}s" || { bad "28c. pending then secure: $res"; cat "$T/log" "$H/$LL_REL"; }
+# 28d (AC5): other wake paths while pending and never secure
+for how in focus term; do
+  LOPT=(--limit 6); lrun "$how" "${FENV[@]}" FAKE_PENDING=1 FAKE_SHELL=never-secure; LOPT=()
+  [ "$le" = -9 ] && [ "$(nkill)" = 0 ] && llog "FALLBACK: already locked (isLocked)" \
+    && ok "28d. $how while pending, never secure: still up, 0 window kills" || { bad "28d. $how pending: $res"; cat "$T/log" "$H/$LL_REL"; }
+done
+LOPT=(--limit 12); lrun hupclose HERDR_SS_LOCK_BACKOFF_MS=200 HERDR_SS_LOCK_RETRIES=1 FAKE_PENDING=1 FAKE_SHELL=never-secure; LOPT=()
+[ "$le" = 0 ] && [ "$(nkill)" = 0 ] && llog "FALLBACK: already locked (isLocked)" && llog "terminal gone after a failed lock: exiting, windows not closed" \
+  && ok "28d. hupclose while pending, never secure: the round ran on its timer, exit 0 by itself in ${lt}s, 0 window kills" || { bad "28d. hupclose pending: $res"; cat "$T/log" "$H/$LL_REL"; }
+# 28e (AC8): every close_windows / low_system_lock call in session.sh comes after a secure-confirming call or
+# in the opt-out branch, and both carry the guard
+g=$(sed -n '/^close_windows() {/,/^}/p' "$REPO/lib/session.sh"); gs=$(sed -n '/^low_system_lock() {/,/^}/p' "$REPO/lib/lock-on-wake.sh")
+# shellcheck disable=SC2016  # literal text of the guards
+[[ $g == *'"${LOW_SECURE:-}" != 1 ] && [ "$close_ok" != opt-out ]'*'lock_failed_loop'* ]] && [[ $gs == *'"${LOW_SECURE:-}" != 1 ]'*'return 1'* ]] \
+  && [ "$(grep -v '^ *#' "$REPO/lib/lock-on-wake.sh" | grep -c 'LOW_SECURE=1')" = 1 ] && grep -q "LOW_SECURE=1; LOW_MS=" "$REPO/lib/lock-on-wake.sh" \
+  && ok "28e. close_windows and low_system_lock refuse without LOW_SECURE=1 (or the opt-out); LOW_SECURE=1 is set in one place, on \"secure\":true" || bad "28e. guards"
 
 echo "---- $PASS ok, $FAIL failed"
 [ $FAIL = 0 ]

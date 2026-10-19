@@ -6,9 +6,10 @@
 # any key or mouse move (herdr itself) or when the window loses focus. Extra arguments go to the engine.
 # Lock on wake (lock-on-wake.sh): every way out (key, mouse, focus loss, the window closing, a signal,
 # the engine crashing or exiting non-zero) goes through on_exit, which asks Omarchy's lock to lock and waits
-# until it is secure BEFORE the screensaver windows close (pkill, like Omarchy), unless Omarchy is
-# already locking, or lock on wake is off (state lock_on_wake=off). If the lock cannot be confirmed it
-# says so in $DATA/lock.log and a critical notification, and the windows stay up (lock_failed_loop):
+# until it is secure (status "secure":true) BEFORE the screensaver windows close (pkill, like Omarchy),
+# unless lock on wake is off (state lock_on_wake=off). When Omarchy is already locking (isLocked, or a
+# compositor lock) it asks for no second lock but still waits for secure. If the lock cannot be confirmed
+# it says so in $DATA/lock.log and a critical notification, and the windows stay up (lock_failed_loop):
 # "Lock failed" on screen, retries with growing waits (a key retries at once), then a wait for a key;
 # they close only once a lock is secure (or Omarchy's own lock closes them).
 # $DATA is ${HERDR_SS_DATA:-~/.local/share/herdr-screensaver-plugin} (the plugin's only data dir).
@@ -60,7 +61,13 @@ screensaver_in_focus() {
   hyprctl activewindow -j | jq -e '.class == "org.omarchy.screensaver"' >/dev/null 2>&1
 }
 
+# The plugin's only window kill. Refuses (and keeps the windows up in lock_failed_loop) unless this exit has
+# a confirmed secure lock (LOW_SECURE, set only by low_wait_secure) or lock on wake is off (close_ok).
 close_windows() {
+  if [ "${LOW_SECURE:-}" != 1 ] && [ "$close_ok" != opt-out ]; then
+    low_log "BUG: close without a secure lock refused"
+    lock_failed_loop "internal: close without a secure lock"   # never returns
+  fi
   cursor_invisible false
   pkill -f '[o]rg.omarchy.screensaver' 2>/dev/null
   low_log "windows closed"
@@ -156,6 +163,7 @@ lock_failed_loop() {
   done
 }
 
+close_ok=""
 child=""
 stty_saved=""
 watcher=""
@@ -170,7 +178,7 @@ on_exit() {
   trap '' HUP
   trap ':' INT TERM QUIT USR1
   trap - EXIT
-  low_deadline 4500   # the windows close within 4.5 s of here (lock phase 3 s, then the fallback and omarchy-system-lock)
+  low_deadline 4500   # a secure lock closes the windows within 4.5 s of here (lock phase 3 s, then omarchy-system-lock); otherwise lock_failed_loop keeps them up
   [ -n "$watcher" ] && kill "$watcher" 2>/dev/null
   if [ -n "$child" ] && kill -0 "$child" 2>/dev/null; then
     kill -TERM "$child" 2>/dev/null   # herdr restores the terminal on SIGTERM
@@ -181,20 +189,22 @@ on_exit() {
   low_log "exit reason=$1"
   if ! low_enabled "$DATA/state"; then
     low_log "off (opt-out)"
+    close_ok=opt-out
   elif ! command -v omarchy-shell >/dev/null 2>&1; then
     lock_failed_loop "omarchy-shell not found"   # never returns to close_windows below
   elif low_already_locked; then
-    # Omarchy's own lock (or the idle plugin's lockSystem) is running: no second request
-    low_log "already locked ($LOW_WHICH): not requesting a lock"
+    # Omarchy's own lock (or the idle plugin's lockSystem) is requested, pending or held: no second request
+    # yet, but isLocked / a compositor lock is no confirmation; not secure within 3 s -> the failed-lock loop
+    low_log "already locked ($LOW_WHICH): not requesting a lock; waiting for secure"
     if low_wait_secure 3000; then low_log "secure after ${LOW_MS}ms"
-    else low_log "already locked but not secure after 3s (Omarchy's own lock is in progress)"; fi
+    else lock_failed_loop "already locked ($LOW_WHICH) but not secure within 3s (status: ${LOW_STATUS:-no reply})"; fi   # never returns
   elif low_attempt; then
     cursor_invisible false
     low_system_lock   # Omarchy's own lock steps; its pkill closes the windows
   else
     lock_failed_loop "$LOW_WHY"   # never returns to close_windows below
   fi
-  # only: lock on wake off, already locked, or secure
+  # only: lock on wake off, or secure (close_windows refuses anything else)
   close_windows
   exit 0
 }
