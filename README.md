@@ -69,8 +69,11 @@ seen: "found N of M". The list of eggs you have found is kept in
 
 On by default. Every way out (a key, a mouse move, focus loss, the window closing, the screensaver crashing)
 first asks Omarchy's lock to lock the screen and waits until it reports secure (up to 3 seconds). Only then do
-the screensaver windows close. If the lock cannot be confirmed, you get a critical notification and a line in
-`~/.local/share/herdr-screensaver-plugin/lock.log`. Then it also tries Omarchy's own lock command and `loginctl lock-session`.
+the screensaver windows close (and Omarchy's own lock steps run). If the lock cannot be confirmed, you get a
+critical notification and a line in `~/.local/share/herdr-screensaver-plugin/lock.log`, and it also asks
+`loginctl lock-session`. The screensaver then stays up instead of showing your desktop unlocked: it shows
+"Lock failed" and retries a few times, waiting longer each time. Any key retries at once. After that it waits
+for a key, and it never closes on its own until a lock is confirmed. Every retry goes into lock.log.
 
 ```bash
 omarchy-shell herdr-screensaver lockOnWake off      # or on, or status
@@ -144,6 +147,11 @@ rm -rf ~/.local/share/herdr-screensaver-plugin
   monitor ARMED. Stay-awake must be OFF. An idle inhibitor (a video playing, for example) also holds it back.
 - **"Screensaver only runs in Alacritty, Foot, Ghostty, or Kitty".** Your default terminal is another one (`status`
   shows which; so does `xdg-terminal-exec --print-id`). Set one of those four as your default terminal.
+- **"Lock failed, retrying".** Lock on wake could not confirm Omarchy's lock, so the screensaver stays up rather
+  than leave your desktop unlocked. Press a key to retry. `~/.local/share/herdr-screensaver-plugin/lock.log` says
+  why. If Omarchy's lock stays broken, switch to a text console (Ctrl+Alt+F2), log in and read lock.log. Then, in the
+  plugin directory (`~/.config/omarchy/plugins/io.github.minyona.herdr-screensaver`), run
+  `bin/herdr-screensaver-ctl set lock_on_wake off`, or close the screensaver with `pkill -f org.omarchy.screensaver`.
 - **A blank screen instead of herdr.** python3 is missing or older than 3.8. Waking still locks.
 - **The old one-liner install is still active.** `status` says `old one-liner install: DETECTED`. Remove it with its own
   command first: `~/.local/share/herdr-screensaver/omarchy/install.sh uninstall`. This plugin never touches it.
