@@ -51,7 +51,8 @@ like Omarchy's own idle service, and starts no second Quickshell process.
   `omarchy-launch-screensaver`, whose first check (`pgrep -f '[o]rg.omarchy.screensaver'`) sees a screensaver
   already running and exits.
 - **Locking stays Omarchy's.** Omarchy's lock timer (`idle.lock`, 300 s by default) still runs and locks the
-  screen as usual. Omarchy's lock closes the screensaver windows.
+  screen as usual. Omarchy's lock closes the screensaver windows (right after asking for the lock; see Lock on
+  wake).
 - If Omarchy's screensaver is turned off (its screensaver-off toggle), the takeover does not start herdr either.
   `test` always runs.
 
@@ -67,13 +68,26 @@ seen: "found N of M". The list of eggs you have found is kept in
 
 ## Lock on wake
 
-On by default. Every way out (a key, a mouse move, focus loss, the window closing, the screensaver crashing)
-first asks Omarchy's lock to lock the screen and waits until it reports secure (up to 3 seconds). Only then do
-the screensaver windows close (and Omarchy's own lock steps run). If the lock cannot be confirmed, you get a
+On by default. Every way out (a key, a mouse move, focus loss, the window closing, a signal, the screensaver
+crashing) first asks Omarchy's lock to lock the screen and waits until it reports secure (up to 3 seconds).
+"Secure" means Omarchy's lock status says `secure`: the compositor confirmed the lock. Locked or requested is
+not enough. Only then do the screensaver windows close (and Omarchy's own lock steps run). If Omarchy is already
+locking (a lock requested but not yet secure), herdr does not ask again at first, but it still waits for
+secure. If the lock cannot be confirmed (also when Omarchy's own lock is not secure within 3 seconds), you get a
 critical notification and a line in `~/.local/share/herdr-screensaver-plugin/lock.log`, and it also asks
 `loginctl lock-session`. The screensaver then stays up instead of showing your desktop unlocked: it shows
 "Lock failed" and retries a few times, waiting longer each time. Any key retries at once. After that it waits
-for a key, and it never closes on its own until a lock is confirmed. Every retry goes into lock.log.
+for a key, and herdr never closes the windows on its own until a lock is confirmed. Every retry goes into
+lock.log.
+
+The exceptions, where the windows close without a confirmed lock:
+
+- `lockOnWake off` (below): the windows close with no lock at all.
+- Omarchy's own lock (the idle lock timer, SUPER+CTRL+L, the menu's Lock, closing the lid) runs
+  `omarchy-system-lock`, which closes the screensaver windows itself right after asking for the lock, as it does
+  for Omarchy's own screensaver. herdr's session then still waits for secure and alerts if it never comes.
+- A `kill -9` (or a crash) of the screensaver session or its terminal. Nothing in Omarchy sends one.
+- You closing it by hand with `pkill -f org.omarchy.screensaver` (see Troubleshooting).
 
 ```bash
 omarchy-shell herdr-screensaver lockOnWake off      # or on, or status
@@ -148,7 +162,7 @@ rm -rf ~/.local/share/herdr-screensaver-plugin
 - **"Screensaver only runs in Alacritty, Foot, Ghostty, or Kitty".** Your default terminal is another one (`status`
   shows which; so does `xdg-terminal-exec --print-id`). Set one of those four as your default terminal.
 - **"Lock failed, retrying".** Lock on wake could not confirm Omarchy's lock, so the screensaver stays up rather
-  than leave your desktop unlocked. Press a key to retry. `~/.local/share/herdr-screensaver-plugin/lock.log` says
+  than leave your desktop unlocked. It also shows when Omarchy's own lock stays pending (requested, never secure). Press a key to retry. `~/.local/share/herdr-screensaver-plugin/lock.log` says
   why. If Omarchy's lock stays broken, switch to a text console (Ctrl+Alt+F2), log in and read lock.log. Then, in the
   plugin directory (`~/.config/omarchy/plugins/io.github.minyona.herdr-screensaver`), run
   `bin/herdr-screensaver-ctl set lock_on_wake off`, or close the screensaver with `pkill -f org.omarchy.screensaver`.
