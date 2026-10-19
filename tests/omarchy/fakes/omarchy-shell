@@ -9,6 +9,8 @@
 #   FAKE_SHELL=slow-unrequested: lock takes 1 s (times out when the IPC limit is shorter) and status
 #     never shows "requested":true nor "secure":true, so lock on wake keeps asking again
 #   FAKE_SECURE_AFTER=n (status polls after the request until secure, default 2)
+#   FAKE_LOCK_FAILS=n: the first n "lock lock" calls are refused (missing-pam, exit 0, no request held);
+#     later calls behave as the other knobs say. Every "lock lock" call is counted in $D/lockcalls.
 log() { printf "%s\n" "$*" >> "${FAKE_LOG:?}"; }
 D=${FAKE_LOCK_DIR:-$FAKE_LOG.lockstate}
 mkdir -p "$D"
@@ -22,7 +24,8 @@ requested() { [ -e "$D/requested" ] || [ "${FAKE_LOCKED:-}" = 1 ]; }
 case ${2:-} in
 lock)
   log "omarchy-shell lock lock"
-  if [ "${FAKE_SHELL:-}" = missing-pam ]; then echo missing-pam; exit 0; fi
+  c=$(( $(cat "$D/lockcalls" 2>/dev/null || echo 0) + 1 )); echo "$c" > "$D/lockcalls"
+  if [ "${FAKE_SHELL:-}" = missing-pam ] || [ "$c" -le "${FAKE_LOCK_FAILS:-0}" ]; then echo missing-pam; exit 0; fi
   if [ "${FAKE_SHELL:-}" = slow-unrequested ]; then
     if awk -v t="${t%s}" 'BEGIN { exit !(t < 1) }'; then sleep "${t%s}"; echo "omarchy-shell: lock lock not responding after ${t}" >&2; exit 1; fi
     sleep 1; echo ok; exit 0
