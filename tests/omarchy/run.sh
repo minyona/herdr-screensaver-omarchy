@@ -557,5 +557,18 @@ g=$(sed -n '/^close_windows() {/,/^}/p' "$REPO/lib/session.sh"); gs=$(sed -n '/^
   && [ "$(grep -v '^ *#' "$REPO/lib/lock-on-wake.sh" | grep -c 'LOW_SECURE=1')" = 1 ] && grep -q "LOW_SECURE=1; LOW_MS=" "$REPO/lib/lock-on-wake.sh" \
   && ok "28e. close_windows and low_system_lock refuse without LOW_SECURE=1 (or the opt-out); LOW_SECURE=1 is set in one place, on \"secure\":true" || bad "28e. guards"
 
+echo "== 29. no stray signal ends the session without on_exit"
+make_tree v4real
+# 29a (AC9): USR2, ALRM, PIPE, VTALRM (default-fatal, untrapped before 1.0.2) lock first, like TERM
+for sig in USR2 ALRM PIPE VTALRM; do lock_case 29a "sig:$sig" "signal:$sig"; done
+# 29b (AC10): the same signals in the failed state are dropped: on_exit ran once, the retries go on
+for sig in USR2 ALRM; do
+  LOPT=(--then "sig:$sig" --then-on 'Lock failed')
+  lrun key "${FENV[@]}" FAKE_SHELL=missing-pam
+  LOPT=()
+  [ "$(echo "$res" | jq -r .then_at)" != null ] && [ "$le" = -9 ] && [ "$(nkill)" = 0 ] && [ "$(grep -c 'exit reason=' "$H/$LL_REL")" = 1 ] && [ "$(nlock)" = 4 ] \
+    && ok "29b. $sig in the failed state: still up, one exit reason, the round ran on (4 lock calls), no window kill" || { bad "29b. $sig: $res"; cat "$T/log" "$H/$LL_REL"; }
+done
+
 echo "---- $PASS ok, $FAIL failed"
 [ $FAIL = 0 ]

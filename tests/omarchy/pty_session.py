@@ -6,11 +6,12 @@
   ctrlc    a Ctrl+C byte typed (the tty's INTR character)
   hupclose the terminal goes away: the pty master is closed (the pty is the session's controlling tty)
   wait     nothing (the engine ends by itself: crash / non-zero exit)
+  sig:NAME kill -NAME <session>, e.g. sig:USR2 (also as --then)
 Options: --limit S (wait after the action, default 5), --ready BYTES (seen once started, default herdr),
 --settle S (run time before the action, default 8: the first egg slot is at ~5 s),
 --before CMD (a command run, with this environment, just before the action; e.g. Omarchy's own lock),
 --ignore-intquit 1 (start the session with SIGINT and SIGQUIT ignored, as an & job of a script would),
---then ACTION (a second action after the first: key, term, int, hup, quit or ctrlc), done once
+--then ACTION (a second action after the first: key, term, int, hup, quit, ctrlc or sig:NAME), done once
 --then-on TEXT appears in the output after the first action, or --then-delay S seconds after it
 (the limit still counts from the first action), --expect TEXT (did TEXT appear after the first action?).
 Prints one JSON line: {exit, took, restored, frame, left_alt_screen, found, pid, then_at, expect, tail}:
@@ -96,6 +97,8 @@ def act(a):
         os.kill(p.pid, signal.SIGINT)
     elif a == "quit":
         os.kill(p.pid, signal.SIGQUIT)
+    elif a.startswith("sig:"):
+        os.kill(p.pid, getattr(signal, "SIG" + a[4:]))
     elif a == "ctrlc":
         os.write(master, b"\x03")
     elif a == "hupclose":

@@ -164,19 +164,25 @@ lock_failed_loop() {
 }
 
 close_ok=""
+# Every other catchable signal whose default ends the process (Linux and macOS; IO, PWR and STKFLT are Linux
+# names, taken only where this bash knows them): without a trap one would end the session without on_exit,
+# and its terminal would close with no lock. Not trapped: SIGKILL/SIGSTOP (impossible), the synchronous
+# fault signals SEGV/BUS/ILL/FPE/ABRT/TRAP/SYS (unsafe to resume bash after them) and the real-time signals.
+extra_sigs=()
+for sig in USR2 ALRM PIPE VTALRM PROF XCPU XFSZ IO PWR STKFLT; do kill -l "$sig" >/dev/null 2>&1 && extra_sigs+=("$sig"); done
 child=""
 stty_saved=""
 watcher=""
 exiting=""
 # The one way out. Runs once and cannot be cut short: the dying terminal's SIGHUP (from our own pkill,
-# or Omarchy's) is ignored from here on, and INT/TERM/QUIT/USR1 are caught and dropped. Caught, not
-# ignored: an ignored signal stays ignored in every command started from here (Omarchy's
+# or Omarchy's) is ignored from here on, and INT/TERM/QUIT/USR1 and the extra_sigs are caught and dropped.
+# Caught, not ignored: an ignored signal stays ignored in every command started from here (Omarchy's
 # "timeout 1s pidwait" could then never stop its pidwait); a caught one is back at its default there.
 on_exit() {
   [ -z "$exiting" ] || return 0
   exiting=1
   trap '' HUP
-  trap ':' INT TERM QUIT USR1
+  trap ':' INT TERM QUIT USR1 "${extra_sigs[@]}"
   trap - EXIT
   low_deadline 4500   # a secure lock closes the windows within 4.5 s of here (lock phase 3 s, then omarchy-system-lock); otherwise lock_failed_loop keeps them up
   [ -n "$watcher" ] && kill "$watcher" 2>/dev/null
@@ -213,6 +219,8 @@ trap 'on_exit signal:TERM' TERM
 trap 'on_exit signal:HUP' HUP
 trap 'on_exit signal:QUIT' QUIT
 trap 'on_exit focus' USR1
+# shellcheck disable=SC2064  # $sig is expanded now, on purpose
+for sig in "${extra_sigs[@]}"; do trap "on_exit signal:$sig" "$sig"; done
 trap 'on_exit shell-exit' EXIT
 
 # Without python3 or the engine there is no herdr: a blank screen instead (never Omarchy's own saver,
