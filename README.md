@@ -59,6 +59,11 @@ like Omarchy's own idle service, and starts no second Quickshell process.
 Nothing of Omarchy's is changed. The takeover exists only while the plugin is loaded. Turning it off, disabling
 the plugin or removing it leaves Omarchy exactly as it was.
 
+**Burn-in protection (1.1.0).** The picture never sits still on the same cells: the board is drawn up to 2 cells
+smaller than the screen and drifts by one cell every 30 seconds (a 12.5-minute loop through 25 positions; the
+margin is plain theme background), and at each workspace flip the layout may mirror left to right or move the lead
+strip above the team. Panes only move, never resize, so the layout class and the font size stay the same.
+
 ## Easter eggs
 
 727 eggs show up as messages, commit lines, log lines, workspace names and more, a few per minute. Some are rare,
