@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from test_layout import C, TERMINAL, check_frame  # noqa: E402
+from test_layout import C, TERMINAL, check_frame, board_view  # noqa: E402
 
 from screensaver.channels import wrap, pane_text_width, message_rows  # noqa: E402
 from screensaver.clock import parse_now  # noqa: E402
@@ -27,7 +27,7 @@ EGGS = {e["id"]: e for e in C["eggs"]}
 
 def placed_frame(w, h, tid):
     """seed 7, 30 s in, then the egg placed and fully revealed; returns (state, grid, egg event)."""
-    e = Engine(C, cols=w, rows=h, seed=7, now=parse_now(NOW), animate=True)
+    e = Engine(C, cols=w, rows=h, seed=7, now=parse_now(NOW), animate=True, burnin=False)
     for _ in range(30):
         e.update(1000)
     S = e.state
@@ -111,7 +111,7 @@ class RenderInFull(unittest.TestCase):
 def visible_ms(w, h, seed, tid, step=100, window_ms=30000):
     """With every other egg found, tid is the first draw. From its placement on, for window_ms: how
     long (ms) the whole text is on screen in the lead pane, and how long 'Alex Epstein' is."""
-    e = Engine(C, cols=w, rows=h, seed=seed, now=parse_now(NOW), found=[x for x in EGGS if x != tid], animate=False)
+    e = Engine(C, cols=w, rows=h, seed=seed, now=parse_now(NOW), found=[x for x in EGGS if x != tid], animate=False, burnin=False)
     text = EGGS[tid]["text"]
     whole = name = 0
     start = None
@@ -149,7 +149,7 @@ class MessageHold(unittest.TestCase):
         print("\n# EP-5 worst over 120 runs: whole %d ms, name %d ms" % worst)
 
     def test_ep5b_hold_delays_crew_lines_not_eggs(self):
-        e = Engine(C, cols=100, rows=22, seed=7, now=parse_now(NOW), animate=False)
+        e = Engine(C, cols=100, rows=22, seed=7, now=parse_now(NOW), animate=False, burnin=False)
         for _ in range(30):
             e.update(1000)
         S = e.state
@@ -179,7 +179,7 @@ class FooterWhenAllFound(unittest.TestCase):
         keeps the room its fit check counted on (the tail gives way), so T005 is never cut."""
         text = EGGS[FOOTER]["text"]
         for w, h in SIZES:
-            e = Engine(C, cols=w, rows=h, seed=7, now=parse_now(NOW), found=list(EGGS), animate=True)
+            e = Engine(C, cols=w, rows=h, seed=7, now=parse_now(NOW), found=list(EGGS), animate=True, burnin=False)
             for _ in range(30):
                 e.update(1000)
             S = e.state
@@ -210,7 +210,7 @@ class Rare(unittest.TestCase):
         run_ms = hours * 3600 * 1000
         visible_each = reveal_ms(EGGS[FOOTER]["text"]) + TICKER_HOLD_MS
         for seed in (1, 7, 42):
-            e = Engine(C, cols=100, rows=22, seed=seed, now=parse_now(NOW), animate=False)
+            e = Engine(C, cols=100, rows=22, seed=seed, now=parse_now(NOW), animate=False, burnin=False)
             for _ in range(hours * 3600):
                 e.update(1000)
             ev = [x for x in e.state.trace if x[1] == "egg" and x[3] and x[3].startswith("T")]
@@ -255,6 +255,44 @@ class CliDump(unittest.TestCase):
             for role in ("lead", "planner", "builder", "reviewer", "qa"):
                 self.assertRegex(out, r"╭─ (\S+ · )?%s · " % role, (size, role))
             self.assertIn("found 727 of 727", out)
+
+
+class BurnIn(unittest.TestCase):
+    """The other tests here pin the exact screen layout (burn-in off). With burn-in on (the default),
+    the board is smaller and drifts: the six lines must still be whole, read through the board."""
+
+    def placed(self, w, h, tid):
+        e = Engine(C, cols=w, rows=h, seed=7, now=parse_now(NOW), animate=True)
+        for _ in range(30):
+            e.update(1000)
+        S = e.state
+        n0 = len(S.trace)
+        _place(S, S.eggs[tid], False)
+        ev = [x for x in S.trace[n0:] if x[1] == "egg"]
+        e.update(reveal_ms(S.eggs[tid]["text"]) + 100)
+        g = Grid(w, h)
+        e.draw(g)
+        return S, board_view(self, S, g), ev
+
+    def test_messages_whole_with_burnin_on(self):
+        for w, h in SIZES:
+            for tid in MESSAGES:
+                text = EGGS[tid]["text"]
+                S, b, ev = self.placed(w, h, tid)
+                where = (w, h, tid, "board", S.cols, S.rows)
+                self.assertTrue(S.burnin, where)
+                self.assertEqual([(x[3], x[4], x[5]) for x in ev], [(tid, "message", "lead")], where)
+                shown = [x.strip() for x in lead_rows(S, b) if x.strip()]
+                k = len(wrap(text, pane_text_width(S.layout["rects"]["lead"])))
+                self.assertEqual(" ".join(shown[-k:]), text, (where, shown))
+                self.assertEqual(name_shown(shown[-k:]), 1, (where, shown))
+
+    def test_footer_whole_with_burnin_on(self):
+        for w, h in SIZES:
+            S, b, ev = self.placed(w, h, FOOTER)
+            where = (w, h, FOOTER, "board", S.cols, S.rows)
+            self.assertEqual([(x[3], x[4]) for x in ev], [(FOOTER, "ticker")], where)
+            self.assertIn(EGGS[FOOTER]["text"], b.plain().split("\n")[S.layout["rects"]["status"]["y"]], where)
 
 
 if __name__ == "__main__":

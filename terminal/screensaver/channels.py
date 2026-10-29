@@ -92,7 +92,8 @@ def fits(channel, text, layout, cols, total):
 def toast_layout(text, rects, cols, rows, cls=None):
     """Where a toast goes: the lower half of btop, else the whole screen (shared with web/src/channels.js).
     Terminal-only classes (cls below "full") with a sidebar use the screen right of the sidebar instead,
-    so a toast never covers the workspace list."""
+    so a toast never covers the workspace list. With the sidebar mirrored to the right edge (burn-in flip
+    reflow, variants 1/3) that is the screen left of it, so toasts fit the same in every variant."""
     regions = []
     b = rects.get("btop")
     if b:
@@ -100,7 +101,10 @@ def toast_layout(text, rects, cols, rows, cls=None):
         regions.append({"x": b["x"] + 1, "y": b["y"] + top, "w": b["w"] - 2, "h": b["h"] - top - 1})
     sb = rects.get("sidebar")
     if cls not in (None, "full") and sb:
-        regions.append({"x": sb["x"] + sb["w"], "y": 0, "w": cols - sb["x"] - sb["w"], "h": rows})
+        if sb["x"] > 0:
+            regions.append({"x": 0, "y": 0, "w": sb["x"], "h": rows})
+        else:
+            regions.append({"x": sb["x"] + sb["w"], "y": 0, "w": cols - sb["x"] - sb["w"], "h": rows})
     else:
         regions.append({"x": 0, "y": 0, "w": cols, "h": rows})
     for reg in regions:

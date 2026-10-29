@@ -19,7 +19,7 @@ EGGS = {e["id"]: e for e in C["eggs"]}
 
 
 def frames(w, h, seed, now, seconds, step=1000):
-    e = Engine(C, cols=w, rows=h, seed=seed, now=parse_now(now), animate=True)
+    e = Engine(C, cols=w, rows=h, seed=seed, now=parse_now(now), animate=True, burnin=False)
     for _ in range(seconds * 1000 // step):
         e.update(step)
         g = Grid(w, h)
@@ -54,7 +54,7 @@ class OddballTicker(unittest.TestCase):
 
     def test_t005_still_whole_in_the_ticker(self):
         """The footer egg owns the ticker over the oddball fallback (seed 2 at 83x24)."""
-        e = Engine(C, cols=83, rows=24, seed=2, now=parse_now(NOW), animate=True)
+        e = Engine(C, cols=83, rows=24, seed=2, now=parse_now(NOW), animate=True, burnin=False)
         for _ in range(10):
             e.update(1000)
         _place(e.state, e.state.eggs["T005"], False)
@@ -111,7 +111,7 @@ class ToastPlacement(unittest.TestCase):
     def test_drawn_toast_at_83x24(self):
         """A btop egg (no btop at 83x24, so a toast) drawn: the sidebar column stays whole."""
         egg = next(e for e in C["eggs"] if e.get("pane") == "btop")
-        e = Engine(C, cols=83, rows=24, seed=7, now=parse_now(NOW), animate=True)
+        e = Engine(C, cols=83, rows=24, seed=7, now=parse_now(NOW), animate=True, burnin=False)
         for _ in range(30):
             e.update(1000)
         S = e.state

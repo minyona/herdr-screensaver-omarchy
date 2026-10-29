@@ -17,6 +17,8 @@ from screensaver.channels import toast_layout  # noqa: E402
 from screensaver.chrome import pane_title, pane_title_fit, SEP  # noqa: E402
 from screensaver.clock import parse_now  # noqa: E402
 from screensaver.director import Engine  # noqa: E402
+from screensaver.burnin import frame_at, apply_variant  # noqa: E402
+from screensaver.director import trace_line  # noqa: E402
 from screensaver.grid import Grid, fit, wrap_readable, BREAKS, ELL  # noqa: E402
 from screensaver.sidebar import draw_sidebar, NARROW_BADGES  # noqa: E402
 from screensaver.layout import compute_layout, size_class, MIN_PANE_W, MIN_PANE_H, SIDEBAR_INDEX_W  # noqa: E402
@@ -73,11 +75,14 @@ class Classes(unittest.TestCase):
         self.assertEqual(size_class(150, 40), "full")
 
     def test_geometry_every_size(self):
+        """Every size x 0-2 oddballs x flip variant 0-3 (plan S3: variants move rects, never resize)."""
         for w in range(20, 301):
             for h in range(8, 91):
-                for o in range(3):
-                    L = compute_layout(w, h, o)
+                for o, v in ((o, v) for o in range(3) for v in range(4)):
+                    L0 = compute_layout(w, h, o)
+                    L = apply_variant(L0, v)
                     cls, rs = L["cls"], L["rects"]
+                    self.assertEqual({k: (r["w"], r["h"]) for k, r in rs.items()}, {k: (r["w"], r["h"]) for k, r in L0["rects"].items()}, (w, h, o, v))
                     items = list(rs.items())
                     for k, r in items:
                         self.assertTrue(r["w"] >= 1 and r["h"] >= 1 and r["x"] >= 0 and r["y"] >= 0 and r["x"] + r["w"] <= w and r["y"] + r["h"] <= h, (w, h, o, k))
@@ -90,26 +95,29 @@ class Classes(unittest.TestCase):
                                 self.assertTrue(r["w"] >= MIN_PANE_W and r["h"] >= MIN_PANE_H, (w, h, o, k, r))
                         self.assertGreaterEqual(rs["lead"]["h"], 4)
                     if w >= 80 and h >= 20:
+                        # Fix 2 P1 describes the unmirrored layout (sidebar left, lead at x == sw): check it on
+                        # variant 0; the invariants above hold for every variant.
+                        rs0, items0 = L0["rects"], list(L0["rects"].items())
                         for k in ("sidebar",) + AGENTS:
                             self.assertIn(k, rs, (w, h, o))
-                        sw = rs["sidebar"]["w"]
+                        sw = rs0["sidebar"]["w"]
                         if cls == "full":
                             self.assertEqual(sw, 24, (w, h, sw))
                         else:
                             # Fix 2 P1: the oddball pane first, then btop, then the sidebar grows (16..24)
                             self.assertTrue(16 <= sw <= 24, (w, h, o, sw))
-                            right = [r["x"] + r["w"] for k, r in items if k not in ("tabs", "status", "sidebar")]
+                            right = [r["x"] + r["w"] for k, r in items0 if k not in ("tabs", "status", "sidebar")]
                             self.assertEqual(max(right), w, (w, h, o, "full width used"))
-                            self.assertEqual(rs["lead"]["x"], sw, (w, h, o))
-                            self.assertGreaterEqual(rs["lead"]["h"] - 2, 3, (w, h, o, "lead strip inner rows"))
+                            self.assertEqual(rs0["lead"]["x"], sw, (w, h, o))
+                            self.assertGreaterEqual(rs0["lead"]["h"] - 2, 3, (w, h, o, "lead strip inner rows"))
                             if o and w - 16 >= 3 * MIN_PANE_W:
                                 self.assertIn("odd0", rs, (w, h, o, "oddball pane when 16 + 3 x 26 fit"))
                             if o == 2 and "odd0" in rs:
                                 self.assertIn("odd1", rs, (w, h, o))
                             if sw < 24:   # the sidebar only gives up columns to a pane or btop
-                                self.assertEqual(sum(r["w"] for k, r in items if k in TEAM[:2] or k == "odd0") + rs.get("btop", {"w": 0})["w"] + sw, w, (w, h, o))
-                                cols = 3 if "odd0" in rs else 2
-                                self.assertEqual(w - sw - rs.get("btop", {"w": 0})["w"], cols * MIN_PANE_W, (w, h, o, "team at its minimum"))
+                                self.assertEqual(sum(r["w"] for k, r in items0 if k in TEAM[:2] or k == "odd0") + rs0.get("btop", {"w": 0})["w"] + sw, w, (w, h, o))
+                                cols = 3 if "odd0" in rs0 else 2
+                                self.assertEqual(w - sw - rs0.get("btop", {"w": 0})["w"], cols * MIN_PANE_W, (w, h, o, "team at its minimum"))
                     elif w >= 60 and h >= 16:
                         self.assertEqual(cls, "narrow")
                         for k in AGENTS:
@@ -210,7 +218,7 @@ class SidebarMap(unittest.TestCase):
         sidebar (>= 10 workspace rows) or the tab bar's ws k/n."""
         for (w, h), expect in sorted(SIDEBAR_MAP.items()):
             for seed, now in (SEEDS[1], SEEDS[3]):
-                e = Engine(C, cols=w, rows=h, seed=seed, now=parse_now(now), animate=True)
+                e = Engine(C, cols=w, rows=h, seed=seed, now=parse_now(now), animate=True, burnin=False)  # SIDEBAR_MAP is per exact size
                 for f in range(200):
                     e.update(3000)
                     g = Grid(w, h)
@@ -327,8 +335,29 @@ class Fit(unittest.TestCase):
                             self.assertIn(a["role"], t.split(SEP) + [a["name"]], (agent, room, t))
 
 
+def board_view(tc, S, g):
+    """The board part of a screen grid (burn-in orbit drift, plan S2): S.layout is in board
+    coordinates, so crop the screen at the board offset from the shared model. Every cell outside
+    the board is blank theme background."""
+    f = frame_at(S.screen["cols"], S.screen["rows"], S.now + S.t, size_class, S.burnin)
+    tc.assertEqual((g.w, g.h, f["bw"], f["bh"]), (S.screen["cols"], S.screen["rows"], S.cols, S.rows))
+    v = Grid(f["bw"], f["bh"])
+    rows = g.plain().split("\n")
+    for y in range(g.h):
+        if f["oy"] <= y < f["oy"] + f["bh"]:
+            o = y * g.w + f["ox"]
+            v.cells[(y - f["oy"]) * v.w:(y - f["oy"] + 1) * v.w] = g.cells[o:o + v.w]
+            outside = rows[y][:f["ox"]] + rows[y][f["ox"] + v.w:]
+        else:
+            outside = rows[y]
+        tc.assertEqual(outside.strip(), "", ("margin not blank", y))
+    return v
+
+
 def check_frame(tc, S, g, where):
-    """Michael's bar on one rendered frame: borders, titles, sidebar rows, tab and status bar."""
+    """Michael's bar on one rendered frame: borders, titles, sidebar rows, tab and status bar.
+    g is the screen grid; the checks run on the board inside it (board_view)."""
+    g = board_view(tc, S, g)
     rows = [g.plain().split("\n")[y] for y in range(g.h)]
     rs = S.layout["rects"]
     ws = S.ws[S.focus]
@@ -434,7 +463,8 @@ class Btop(unittest.TestCase):
         self.assertIn((25, 20), sizes)  # 100x22
         ids = [w["id"] for w in C["workspaces"]]
         for (bw, bh), (w, h) in sorted(sizes.items()):
-            e = Engine(C, cols=w, rows=h, seed=3, now=parse_now("2026-10-16T13:00"), animate=False, include={"workspaces": ids})
+            e = Engine(C, cols=w, rows=h, seed=3, now=parse_now("2026-10-16T13:00"), animate=False, include={"workspaces": ids},
+                       burnin=False)  # btop drawn straight at compute_layout(w, h)'s rect
             e.update(1000)
             S = e.state
             self.assertEqual(len(S.ws), 35)
@@ -449,16 +479,16 @@ class Btop(unittest.TestCase):
 
 
 class Readability(unittest.TestCase):
-    def sweep(self, w, h, frames, step_ms, seeds):
+    def sweep(self, w, h, frames, step_ms, seeds, variant=None):
         for seed, now in seeds:
-            e = Engine(C, cols=w, rows=h, seed=seed, now=parse_now(now), animate=True)
+            e = Engine(C, cols=w, rows=h, seed=seed, now=parse_now(now), animate=True, variant=variant)
             for f in range(frames):
                 e.update(step_ms)
                 g = Grid(w, h)
                 e.draw(g)
                 for line in g.plain().split("\n")[:h]:
                     self.assertEqual(len(line), w)
-                check_frame(self, e.state, g, (w, h, seed, f))
+                check_frame(self, e.state, g, (w, h, seed, f, "variant", e.state.variant))
 
     def test_100x22_five_seeds_1000_frames(self):
         self.sweep(100, 22, 1000, 1000, SEEDS)
@@ -482,7 +512,7 @@ class Readability(unittest.TestCase):
         That workspace has an oddball, which (Fix 2 P1) takes btop's columns at 100x22; 93x22 keeps the
         same 25-col btop (16 + 3 x 26 do not fit there)."""
         for w, h in ((100, 22), (93, 22)):
-            e = Engine(C, cols=w, rows=h, seed=5, now=parse_now("2026-12-31T23:59"), animate=False)
+            e = Engine(C, cols=w, rows=h, seed=5, now=parse_now("2026-12-31T23:59"), animate=False, burnin=False)  # exact 25-col btop
             for _ in range(399):
                 e.update(50)
             e.state.animate = True
@@ -504,14 +534,103 @@ class Readability(unittest.TestCase):
             self.sweep(w, h, 200, 3000, SEEDS[:2])
 
 
+class Variants(unittest.TestCase):
+    """Plan S3 flip reflow: the readability bar (check_frame) holds in every layout variant, toasts stay
+    inside the board, and the variant never changes the trace."""
+    # the terminal-only classes (check_frame is their bar; "full" is checked by the web tests)
+    SIZES = ((100, 22), (80, 24), (60, 16), (40, 12), (120, 36), (150, 30), (190, 36), (100, 39))
+
+    def test_every_size_every_variant_readable(self):
+        for v in range(4):
+            for w, h in self.SIZES:
+                self.sweep_variant(w, h, v)
+
+    def sweep_variant(self, w, h, v):
+        Readability.sweep(self, w, h, 60, 5000, SEEDS[:2], variant=v)
+
+    def test_natural_variants_readable(self):
+        """Unforced: the variant follows the flips; check every frame right after each flip."""
+        seen = set()
+        for w, h in ((100, 22), (80, 24), (120, 36)):
+            e = Engine(C, cols=w, rows=h, seed=3, now=parse_now("2026-10-15T12:00"), animate=True)
+            flips = 0
+            for f in range(1800):  # 30 virtual min
+                e.update(1000)
+                if e.state.flips != flips:
+                    flips = e.state.flips
+                    seen.add(e.state.variant)
+                    g = Grid(w, h)
+                    e.draw(g)
+                    check_frame(self, e.state, g, (w, h, "after flip", flips, "variant", e.state.variant))
+        self.assertEqual(seen, {0, 1, 2, 3})
+
+    def test_toasts_inside_the_board_every_variant(self):
+        for w, h in self.SIZES + ((20, 8), (30, 10), (160, 50), (200, 60)):
+            for v in range(4):
+                S = Engine(C, cols=w, rows=h, seed=1, now=parse_now("2026-10-15T12:00"), variant=v).state
+                bw, bh = S.cols, S.rows
+                for egg in C["eggs"]:
+                    L = toast_layout(egg["text"], S.layout["rects"], bw, bh)
+                    if L:
+                        r = L["rect"]
+                        self.assertTrue(r["x"] >= 0 and r["y"] >= 0 and r["x"] + r["w"] <= bw and r["y"] + r["h"] <= bh, (w, h, v, egg["id"], r))
+
+    def test_trace_identical_in_every_variant(self):
+        """Seeds 1 and 3, 3 virtual hours at 160x50: variant forced 0 (off), each of 1-3, and unforced
+        (variants on) give byte-identical traces."""
+        for seed in (1, 3):
+            traces = {}
+            for v in (0, None, 1, 2, 3):
+                e = Engine(C, cols=160, rows=50, seed=seed, now=parse_now("2026-10-15T12:00"), animate=False, variant=v)
+                for _ in range(3 * 3600):
+                    e.update(1000)
+                traces[v] = "".join(trace_line(x) + "\n" for x in e.trace)
+            self.assertGreater(traces[0].count('"kind":"flip"'), 30)
+            for v in (None, 1, 2, 3):
+                self.assertEqual(traces[v], traces[0], (seed, v))
+
+    def test_trace_identical_in_every_variant_compact(self):
+        """The terminal-only classes place toasts beside the sidebar (channels.toast_layout), which the
+        mirrored variants move to the right edge: seeds 1 and 3, 1 virtual hour, forced variants 0-3
+        give byte-identical traces, so no toast is lost to mirroring."""
+        for w, h in ((83, 24), (100, 22), (80, 20), (120, 36)):
+            for seed in (1, 3):
+                traces = {}
+                for v in range(4):
+                    e = Engine(C, cols=w, rows=h, seed=seed, now=parse_now("2026-10-15T12:00"), animate=False, variant=v)
+                    for _ in range(3600):
+                        e.update(1000)
+                    traces[v] = "".join(trace_line(x) + "\n" for x in e.trace)
+                self.assertGreater(traces[0].count('"kind":"egg"'), 10, (w, h, seed))
+                for v in (1, 2, 3):
+                    self.assertEqual(traces[v], traces[0], (w, h, seed, v))
+
+    def test_toast_never_over_the_sidebar_every_variant(self):
+        for w, h in self.SIZES + ((83, 24), (80, 20), (82, 21), (149, 44)):
+            for v in range(4):
+                S = Engine(C, cols=w, rows=h, seed=1, now=parse_now("2026-10-15T12:00"), variant=v).state
+                rs, cls = S.layout["rects"], S.layout["cls"]
+                if cls == "full" or "sidebar" not in rs:
+                    continue
+                placed = 0
+                for egg in C["eggs"]:
+                    L = toast_layout(egg["text"], rs, S.cols, S.rows, cls)
+                    if L:
+                        placed += 1
+                        self.assertFalse(overlaps(L["rect"], rs["sidebar"]), (w, h, v, egg["id"], L["rect"]))
+                self.assertGreater(placed, 0, (w, h, v))
+
+
 class LiveFrames(unittest.TestCase):
     def frame(self, w, h, seed, now, steps, include=None):
-        e = Engine(C, cols=w, rows=h, seed=seed, now=parse_now(now), animate=True, include=include)
+        # Exact-size repros (100x22): burn-in off, so the board is the whole screen at variant 0.
+        e = Engine(C, cols=w, rows=h, seed=seed, now=parse_now(now), animate=True, include=include, burnin=False)
         for _ in range(steps):
             e.update(1000)
         g = Grid(w, h)
         e.draw(g)
-        return e.state, g
+        check_frame(self, e.state, g, ("live frame", w, h, seed, now, steps))
+        return e.state, board_view(self, e.state, g)
 
     def test_wrapper_pivot_auto_badge_at_100x22(self):
         """Reviewer L1b: seed 7, 2026-10-16T13:00, wrapper-pivot, frame 341 (t 342 s) had
@@ -522,7 +641,7 @@ class LiveFrames(unittest.TestCase):
         self.assertEqual(S.ws[i]["badge"], "auto")
         r = S.layout["rects"]["sidebar"]
         self.assertEqual(r["w"], 22)   # an oddball workspace: the oddball pane, then a 22-col sidebar (no index)
-        row = rows[r["y"] + 2 + i][:r["w"] - 1]
+        row = rows[r["y"] + 2 + i][r["x"]:r["x"] + r["w"] - 1]
         self.assertEqual(row[1:].rstrip(), "definitely-not-a…  »", row)
         self.assertNotIn("d-n-a-w", g.plain())
         self.assertIn("»=auto", rows[S.layout["rects"]["sidebar"]["y"] + S.layout["rects"]["sidebar"]["h"] - 1])
@@ -549,7 +668,7 @@ class Dumps(unittest.TestCase):
             env = dict(os.environ, XDG_STATE_HOME=os.path.join(d, "state"))
             open(os.path.join(d, "found"), "w").close()
             return subprocess.run([os.path.join(TERMINAL, "bin", "herdr-screensaver"), "--frames", "400", "--seed", "7", "--now", "2026-10-16T13:00",
-                                   "--size", size, "--found-file", os.path.join(d, "found"), "--egg-rate", "0", "--dump", "--plain"],
+                                   "--size", size, "--found-file", os.path.join(d, "found"), "--egg-rate", "0", "--burnin", "off", "--dump", "--plain"],
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, check=True).stdout.decode()
 
     def test_plain_dumps(self):

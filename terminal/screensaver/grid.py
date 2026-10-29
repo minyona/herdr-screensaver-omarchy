@@ -104,6 +104,17 @@ class Grid(object):
             t = title if len(title) <= w - 6 else title[:w - 7] + "…"
             self.put(x + 2, y, " " + t + " ", title_fg, None, bold)
 
+    def blit(self, src, ox, oy):
+        """Copy all of src with its top-left cell at (ox, oy), clipped to this grid (burn-in orbit
+        drift). One row slice per row."""
+        x0, x1 = max(0, -ox), min(src.w, self.w - ox)
+        if x0 >= x1:
+            return
+        sw, w = src.w, self.w
+        for sy in range(max(0, -oy), min(src.h, self.h - oy)):
+            d = (sy + oy) * w + ox
+            self.cells[d + x0:d + x1] = src.cells[sy * sw + x0:sy * sw + x1]
+
     def plain(self):
         w = self.w
         return "".join("".join(c[0] for c in self.cells[y * w:(y + 1) * w]) + "\n" for y in range(self.h))

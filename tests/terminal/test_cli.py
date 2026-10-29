@@ -32,13 +32,24 @@ class CliTest(unittest.TestCase):
         self.assertEqual(r.returncode, 2)
         self.assertIn("unknown theme 'matrix'", r.stderr.decode())
 
-    def test_dump_structure_160x50(self):
-        r = run(["--frames", "2400", "--size", "160x50", "--seed", "3", "--now", "2026-10-15T12:00", "--dump", "--plain"], self.env)
+    def dump_structure(self, burnin):
+        r = run(["--frames", "2400", "--size", "160x50", "--seed", "3", "--now", "2026-10-15T12:00", "--burnin", burnin, "--dump", "--plain"], self.env)
         self.assertEqual(r.returncode, 0, r.stderr)
         text = r.stdout.decode("utf-8")
-        rows = text.split("\n")[:-1]
-        self.assertEqual(len(rows), 50)
-        self.assertTrue(all(len(x) == 160 for x in rows))
+        screen = text.split("\n")[:-1]
+        self.assertEqual(len(screen), 50)
+        self.assertTrue(all(len(x) == 160 for x in screen))
+        # crop to the board (burn-in orbit drift, plan S2) from the headless stderr line
+        bw, bh, ox, oy = map(int, re.search(r" board=(\d+)x(\d+)\+(\d+)\+(\d+) ", r.stderr.decode()).groups())
+        if burnin == "off":
+            self.assertEqual((bw, bh, ox, oy), (160, 50, 0, 0))
+        else:
+            self.assertEqual((bw, bh), (156, 46))
+            self.assertTrue(0 <= ox <= 4 and 0 <= oy <= 4)
+        rows = [x[ox:ox + bw] for x in screen[oy:oy + bh]]
+        self.assertTrue(all(x[:ox].strip() == x[ox + bw:].strip() == "" for x in screen[oy:oy + bh]))
+        self.assertTrue(all(x.strip() == "" for x in screen[:oy] + screen[oy + bh:]))
+        text = "\n".join(rows) + "\n"
         self.assertTrue(rows[0].startswith(" herdr "))
         side = [x[:23] for x in rows[1:-1]]
         ws_rows = [x for x in side if re.match(r"^.[ \d]\d \S", x)]
@@ -52,6 +63,12 @@ class CliTest(unittest.TestCase):
         self.assertRegex(rows[-1], r"found \d+ of %d" % M)
         self.assertIsNone(re.search(r"\brain\b", text, re.I))
         self.assertFalse(any(0xFF66 <= ord(c) <= 0xFF9D for c in text))
+
+    def test_dump_structure_160x50(self):
+        self.dump_structure("on")
+
+    def test_dump_structure_160x50_burnin_off(self):
+        self.dump_structure("off")
 
     def test_ansi_dump_and_sizes(self):
         for size in ("20x8", "60x20", "100x30", "130x36", "200x60"):

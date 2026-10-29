@@ -6,7 +6,9 @@ import math
 
 from .prng import Rng
 from .clock import local_fields, when_matches, date_key
-from .layout import compute_layout
+from .layout import compute_layout, size_class
+from .burnin import frame_at, variant_at, apply_variant
+from .grid import Grid
 from .channels import CHANNELS_BY_PANE, PANE_OF, format_egg, fits, pane_fits, message_rows, wrap, fetch_text_width
 from .found import Found
 from .workspaces import choose_active, crew_step, type_lines
@@ -49,7 +51,7 @@ class State(object):
 
 class Engine(object):
     def __init__(self, content, cols=160, rows=50, seed=1, now=0, found=(), egg_rate=5, include=None,
-                 trace=True, theme=None, animate=True):
+                 trace=True, theme=None, animate=True, burnin=True, variant=None):
         include = include or {}
         S = self.state = State()
         S.content, S.cols, S.rows, S.now, S.t, S.seq, S.queue = content, cols, rows, now, 0, 0, []
@@ -60,6 +62,9 @@ class Engine(object):
         S.theme_name = theme or content["default_theme"]
         S.egg_rate = egg_rate
         S.animate = animate
+        S.burnin, S.screen, S.board = burnin, {"cols": cols, "rows": rows}, None
+        S.force_variant = variant  # test-only: a fixed layout variant 0-3 instead of variant_at()
+        _fit_board(S)
 
         def emit(kind, ws=None, id=None, channel=None, role=None, status=None):
             if S.trace is not None:
@@ -106,11 +111,22 @@ class Engine(object):
         from .render import draw_frame
         S = self.state
         th = S.content["themes"].get(S.theme_name) or S.content["themes"][S.content["default_theme"]]
-        draw_frame(S, grid, getattr(S, "theme_override", None) or th)
+        th = getattr(S, "theme_override", None) or th
+        f = _frame(S)
+        if not f["mx"] and not f["my"]:
+            draw_frame(S, grid, th)
+            return
+        if S.board is None or S.board.w != S.cols or S.board.h != S.rows:
+            S.board = Grid(S.cols, S.rows)
+        draw_frame(S, S.board, th)
+        grid.clear(th["bg"], th["fg"])
+        grid.blit(S.board, f["ox"], f["oy"])
 
     def resize(self, c, r):
-        self.state.cols, self.state.rows = c, r
-        _relayout(self.state)
+        S = self.state
+        S.screen = {"cols": c, "rows": r}
+        _fit_board(S)
+        _relayout(S)
 
     def found_count(self):
         return self.state.found.count()
@@ -120,8 +136,22 @@ class Engine(object):
 
     def info(self):
         S = self.state
-        return {"cols": S.cols, "rows": S.rows, "theme": S.theme_name, "ws": S.ws[S.focus]["id"],
-                "found": S.found.count(), "total": S.found.total, "t": S.t}
+        f = _frame(S)
+        return {"cols": S.screen["cols"], "rows": S.screen["rows"], "theme": S.theme_name, "ws": S.ws[S.focus]["id"],
+                "found": S.found.count(), "total": S.found.total, "t": S.t, "variant": S.variant,
+                "board": {"cols": S.cols, "rows": S.rows, "ox": f["ox"], "oy": f["oy"], "mx": f["mx"], "my": f["my"]}}
+
+
+# Burn-in orbit drift (terminal only; web/ has no burn-in here): S.screen is the real grid; S.cols x S.rows
+# is the board, smaller by class-preserving margins, that every layout, fit check and draw call sees.
+# The board is copied into the screen at an offset that walks ORBIT on wall time (draw-time only).
+def _frame(S):
+    return frame_at(S.screen["cols"], S.screen["rows"], S.now + S.t, size_class, S.burnin)
+
+
+def _fit_board(S):
+    f = _frame(S)
+    S.cols, S.rows = f["bw"], f["bh"]
 
 
 def _warm_up(S):
@@ -145,7 +175,14 @@ def _warm_up(S):
 
 
 def _relayout(S):
-    S.layout = compute_layout(S.cols, S.rows, len(S.ws[S.focus]["oddballs"]))
+    """Flip reflow (terminal only; web/ has no burn-in here): the layout takes variant
+    variant_at(S.now, S.flips) on every flip and resize; rects move, never resize, so the trace is the
+    same in every variant. Burn-in off keeps variant 0."""
+    if S.force_variant is not None:
+        S.variant = S.force_variant
+    else:
+        S.variant = variant_at(S.now, S.flips) if S.burnin else 0
+    S.layout = apply_variant(compute_layout(S.cols, S.rows, len(S.ws[S.focus]["oddballs"])), S.variant)
 
 
 def _slot_interval(S):

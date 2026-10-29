@@ -85,6 +85,8 @@ def build_parser():
     p.add_argument("--found-file", default=None, metavar="PATH",
                    help="where found eggs are kept (default: ${HERDR_SS_DATA:-~/.local/share/herdr-screensaver-plugin}/found)")
     p.add_argument("--content", default=None, metavar="PATH", help="content.json to use (default: next to the engine)")
+    p.add_argument("--burnin", choices=("on", "off"), default="on",
+                   help="burn-in protection: the board slowly drifts by a few cells (default on)")
     p.add_argument("--frames", type=_frames, default=None, metavar="N", help="headless: run N frames on a virtual clock (no terminal)")
     p.add_argument("--size", type=_size, default=None, metavar="WxH",
                    help="headless: the frame size (default 160x50); live: draw exactly WxH at the top left and ignore resizes "
@@ -293,7 +295,8 @@ def main(argv=None):
 
 def make_engine(args, content, theme, store, seed, now, w, h, animate=True):
     eng = Engine(content, w, h, seed=seed, now=now, found=store.ids, egg_rate=args.egg_rate,
-                 theme=theme["name"] if theme["name"] in content["themes"] else None, animate=animate)
+                 theme=theme["name"] if theme["name"] in content["themes"] else None, animate=animate,
+                 burnin=args.burnin == "on")
     if theme["name"] not in content["themes"]:
         eng.state.theme_override = theme
         eng.state.theme_name = theme["name"]
@@ -328,7 +331,9 @@ def headless(args, content, theme, store, seed, now, mode):
         eng.draw(g)
         _write_stdout(g.plain() if args.plain else to_ansi(g, mode) + "\n")
     i = eng.info()
-    sys.stderr.write("%s: %dx%d t=%dms ws=%s end found %d of %d\n" % (PROG, i["cols"], i["rows"], i["t"], i["ws"], i["found"], i["total"]))
+    b = i["board"]
+    sys.stderr.write("%s: %dx%d board=%dx%d+%d+%d t=%dms ws=%s end found %d of %d\n" % (
+        PROG, i["cols"], i["rows"], b["cols"], b["rows"], b["ox"], b["oy"], i["t"], i["ws"], i["found"], i["total"]))
     return 0
 
 
